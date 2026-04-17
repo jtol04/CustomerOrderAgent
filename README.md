@@ -21,35 +21,50 @@ python dummy_customer_api.py
 python main.py
 ```
 
+## Testing the Agent
+```bash
+# Filter by state and price (combined filters)
+> Show me all orders in Ohio over $500
+# Filter by buyer name
+> Show me orders from Rachel Kim
+# Filter by item
+> Which orders have a laptop?
+# Single order lookup
+> Show me order 1001
+# Limit results
+> Show me 2 orders
+```
+
 ## Architecture
 
 ```
 ┌─────────┐
-│  START  │  user query: "orders in Ohio over $500"
+│  START  │  user query: "show me orders in Ohio over $500"
 └────┬────┘
      │
      ▼
 ┌───────────────────────┐
-│ parse_request_filters │   LLM → RequestFilters schema
-└──────────┬────────────┘   (state, min_total, max_total, etc.)
+│ parse_request_filters │   LLM parses user request and checks
+└──────────┬────────────┘   for filters passed in and validity
+           │                Note: If invalid, node goes straight to END.
            │
            ▼
 ┌───────────────────────┐
-│      get_orders       │   HTTP GET /api/orders
-└──────────┬────────────┘   (timeout + error handling)
+│      get_orders       │   HTTP GET /api/orders or 
+└──────────┬────────────┘   /api/order/<order_id> if specified
            │
            ▼
 ┌───────────────────────┐
-│     parse_orders      │   LLM per-order → Order schema
+│     parse_orders      │   LLM parses unstructured ORDERS list
 └──────────┬────────────┘ 
            │
            ▼
 ┌───────────────────────┐
-│     filter_orders     │   Pure Python, deterministic
-└──────────┬────────────┘   
+│     filter_orders     │   Filter the orders based on parsed
+└──────────┬────────────┘   filter request by the user
            │
            ▼
-     { "orders": [...] }    JSON Output
+     { "orders": [...] }    Clean JSON Output
            │
            ▼
         ┌─────┐
@@ -65,7 +80,8 @@ The agent is built as a LangGraph state machine with four nodes. Each node has a
 ```
 ├── main.py                    # LangGraph agent + entry point
 ├── dummy_customer_api.py      # Provided by Raft (not modified)
-├── requirements.txt
+├── requirements.txt           # requirements for running the agent
+├── .env.example                       
 └── README.md
 ```
 
