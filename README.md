@@ -1,4 +1,4 @@
-# Raft Customer Order Agent
+# Customer Order Agent
 
 A LangGraph-based extraction agent that translates natural-language queries into structured order data. Given a natural-language request (e.g. “Show me all orders where the buyer was located in Ohio and total value was over 500.”), the agent calls a customer API to fetch raw data, structures and parses it into typed objects, and returns a clean JSON output.
 
