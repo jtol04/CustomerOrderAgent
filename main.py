@@ -1,17 +1,15 @@
-import os
-import json
-import requests
+import os, json, requests, logging
 from dotenv import load_dotenv
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
-from langchain.messages import HumanMessage
 from langgraph.types import Command
 from langgraph.graph import START, END, StateGraph
 
 
 load_dotenv()
 OPENROUTER_API_KEY= os.getenv("OPENROUTER_API_KEY")
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 llm = ChatOpenAI(
     model="openai/gpt-oss-120b:exacto",
@@ -21,12 +19,12 @@ llm = ChatOpenAI(
 )
 
 class Order(BaseModel):
-    order_num: str = Field(description="The order number")
-    buyer: str = Field(description="The buyer's name")
-    city: str = Field(description="The city within the order location")
-    state: str = Field(description="The state within the order location. This MUST to its two letter version e.g. VA, CA, NY")
-    total_price: float = Field(description="The total price")
-    items: List[str] = Field(description="The list of items")
+    order_num: str = Field(description="The order number exactly as it appears, e.g. 1001")
+    buyer: str = Field(description="The buyer's complete full name, first and last name")
+    city: str = Field(description="The city name only, e.g. Columbus and Seattle.")
+    state: str = Field(description="The state within the order location. This MUST evaluate to its two letter version e.g. VA, CA, NY")
+    total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits.")
+    items: List[str] = Field(description="Complete list of items preserving all full names")
 
 class RequestFilters(BaseModel):
     min_total: Optional[float] = None
@@ -61,7 +59,7 @@ def parse_request_filters(state: AgentState):
     parsed_filters = structured_llm.invoke(prompt)
 
     # add error check and validation here
-    print(parsed_filters)
+    logging.info(f"parsed_filters: {parsed_filters}")
     return Command(
         update={"parsed_filters": parsed_filters},
         goto="get_orders"
@@ -71,10 +69,12 @@ def get_orders(state: AgentState):
     response = requests.get('http://localhost:5001/api/orders')
     data = response.json()
     #print(response.status_code)
-    #print(data["raw_orders"])
+    raw_orders = data["raw_orders"]
+
+    logging.info(f"raw_orders: {raw_orders}")
     
     return Command(
-        update={"raw_orders": data["raw_orders"]},
+        update={"raw_orders": raw_orders},
         goto="parse_orders"
     )
 
@@ -88,10 +88,17 @@ def parse_orders(state: AgentState):
 
         Order: {raw_order}
         
-        Provide the order_num, buyer, city, state, total_price,
+        Provide the order number, buyer name, city, state, total_price,
         and the list of items.
         """
-        parsed_orders.append(structured_llm.invoke(prompt))
+        
+        try: 
+            order = structured_llm.invoke(prompt)
+            parsed_orders.append(order)
+        except Exception as e:
+            logging.warning(f"Failed to parse order for {raw_order} | Error: {e}")
+    
+    logging.info(f"parsed_orders: {parsed_orders}")
     
     return Command(
         update={"parsed_orders": parsed_orders},
