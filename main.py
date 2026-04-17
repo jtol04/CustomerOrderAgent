@@ -27,12 +27,12 @@ class Order(BaseModel):
     items: List[str] = Field(description="Complete list of items preserving all full names")
 
 class RequestFilters(BaseModel):
-    min_total: Optional[float] = None
-    max_total: Optional[float] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    buyer: Optional[str] = None
-    items: Optional[List[str]] = None
+    min_total: Optional[float] = Field(None, description="The minimum price requested by the user")
+    max_total: Optional[float] = Field(None, description="The maximum price requested by the user")
+    city: Optional[str] = Field(None, description="The city name only e.g. Columbus, Seattle")
+    state: Optional[str] =Field(None, description="The state, which MUST evaluate to its two letter version e.g. NY, VA, OH")
+    buyer: Optional[str] = Field(None, descrption="The complete name of the buyer")
+    items: Optional[List[str]] = Field(None, description = "The item/s being asked for within the order")
 
 class AgentState(BaseModel):
     # Raw request data
@@ -68,7 +68,7 @@ def parse_request_filters(state: AgentState):
 def get_orders(state: AgentState):
     response = requests.get('http://localhost:5001/api/orders')
     data = response.json()
-    #print(response.status_code)
+    logging.info(response.status_code)
     raw_orders = data["raw_orders"]
 
     logging.info(f"raw_orders: {raw_orders}")
