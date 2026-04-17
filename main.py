@@ -15,24 +15,26 @@ llm = ChatOpenAI(
     model="openai/gpt-oss-120b:exacto",
     temperature=0,
     base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY
+    api_key=OPENROUTER_API_KEY,
+    timeout=30,
+    max_retries=2
 )
 
 class Order(BaseModel):
-    order_num: str = Field(description="The order number exactly as it appears, e.g. 1001")
-    buyer: str = Field(description="The buyer's complete full name, first and last name")
-    city: str = Field(description="The city name only, e.g. Columbus and Seattle.")
-    state: str = Field(description="The state within the order location. This MUST evaluate to its two letter version e.g. VA, CA, NY")
-    total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits.")
-    items: List[str] = Field(description="Complete list of items preserving all full names")
+    order_num: str = Field(description="The order number exactly as it appears, e.g. 1001, 1002, etc")
+    buyer: str = Field(description="The buyer's complete full name given, e.g. 'Chris Myers, etc'")
+    city: str = Field(description="The city name only, e.g. 'Columbus', 'Seattle', etc")
+    state: str = Field(description="The state within the order location. This MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', etc")
+    total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits, e.g. '156.55', '512.00', etc")
+    items: List[str] = Field(description="Complete list of items preserving all full names, e.g. 'coffee maker, monitor', 'desk lamp', etc")
 
 class RequestFilters(BaseModel):
-    min_total: Optional[float] = Field(None, description="The minimum price requested by the user")
-    max_total: Optional[float] = Field(None, description="The maximum price requested by the user")
-    city: Optional[str] = Field(None, description="The city name only e.g. Columbus, Seattle")
-    state: Optional[str] =Field(None, description="The state, which MUST evaluate to its two letter version e.g. NY, VA, OH")
-    buyer: Optional[str] = Field(None, descrption="The complete name of the buyer")
-    items: Optional[List[str]] = Field(None, description = "The item/s being asked for within the order")
+    min_total: Optional[float] = Field(default=None, description="The complete MINIMUM price requested by the user, e.g. '89.50', '742.10', etc")
+    max_total: Optional[float] = Field(default=None, description="The complete MAXIMUM price requested by the user e.g. '156.55', '1299.99', etc")
+    city: Optional[str] = Field(default=None, description="The city name only e.g. 'Columbus', 'Seattle', etc")
+    state: Optional[str] =Field(default=None, description="The state, which MUST evaluate to its two letter version e.g. 'NY', 'VA', 'OH', etc")
+    buyer: Optional[str] = Field(default=None, descrption="The COMPLETE name of the buyer, e.g. 'Chris Myers', 'John', 'Rachel Kim', etc")
+    items: Optional[List[str]] = Field(default=None, description = "The item/s being asked for within the order, e.g. 'coffee maker, headphones', etc")
 
 class AgentState(BaseModel):
     # Raw request data
@@ -83,6 +85,7 @@ def parse_orders(state: AgentState):
     structured_llm = llm.with_structured_output(Order)
     parsed_orders = []
     for raw_order in state.raw_orders:
+        logging.info(f"current raw order being parsed: {raw_order}")
         prompt = f"""
         Analyze this order.
 
@@ -95,10 +98,11 @@ def parse_orders(state: AgentState):
         try: 
             order = structured_llm.invoke(prompt)
             parsed_orders.append(order)
+            logging.info(f"parsed order: {order}")
         except Exception as e:
             logging.warning(f"Failed to parse order for {raw_order} | Error: {e}")
     
-    logging.info(f"parsed_orders: {parsed_orders}")
+    #logging.info(f"parsed_orders: {parsed_orders}")
     
     return Command(
         update={"parsed_orders": parsed_orders},
