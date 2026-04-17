@@ -20,15 +20,15 @@ llm = ChatOpenAI(
 )
 
 class Order(BaseModel):
-    order_num: int = Field(description="The order number")
+    order_num: str = Field(description="The order number")
     buyer: str = Field(description="The buyer's name")
     location: str = Field(description="The location")
-    total_price: int = Field(description="The total price")
+    total_price: float = Field(description="The total price")
     items: List[str] = Field(description="The list of items")
 
 class RequestFilters(BaseModel):
-    min_total: Optional[int] = None
-    max_total: Optional[int] = None
+    min_total: Optional[float] = None
+    max_total: Optional[float] = None
     location: Optional[str] = None
     buyer: Optional[str] = None
     items: Optional[List[str]] = None
@@ -36,19 +36,11 @@ class RequestFilters(BaseModel):
 class AgentState(BaseModel):
     # Raw request data
     user_request: str
-    raw_orders: List[str]
-    parsed_filters: RequestFilters
-    parsed_orders: List[Order]
+    raw_orders: List[str] = []
+    parsed_filters: Optional[RequestFilters] = None
+    parsed_orders: List[Order] = []
+    filtered_orders: List[Order]= []
 
-request = input("What would you like to do? ")
-
-def read_request(state: AgentState) -> dict:
-    """Extract and parse request content"""
-
-    state.user_request = request
-    return {
-        "messages": [HumanMessage(content=f"Processing request: {state.user_request}")]
-    }
 
 def parse_request_filters(state: AgentState):
     """Use the LLM to get request filters"""
@@ -75,12 +67,12 @@ def parse_request_filters(state: AgentState):
 def get_orders(state: AgentState):
     response = requests.get('http://localhost:5001/api/orders')
     data = response.json()
-    print(response.status_code)
-    print(data["raw_orders"])
+    #print(response.status_code)
+    #print(data["raw_orders"])
     
     return Command(
         update={"raw_orders": data["raw_orders"]},
-        goto=parse_orders
+        goto="parse_orders"
     )
 
 def parse_orders(state: AgentState):
@@ -108,13 +100,33 @@ def filter_orders(state: AgentState):
     filtered_orders = [
         item for item in state.parsed_orders
         if (state.parsed_filters.min_total is None or item.total_price >= state.parsed_filters.min_total)
-        and (state.parsed_filters.max_total is None or item.total_price <= state.parsed_filtersmax_total)
+        and (state.parsed_filters.max_total is None or item.total_price <= state.parsed_filters.max_total)
         and (state.parsed_filters.location is None or item.location == state.parsed_filters.location)
         and (state.parsed_filters.buyer is None or item.buyer == state.parsed_filters.buyer)
         and (state.parsed_filters.items is None or item.items in state.parsed_filters.items)
     ]
     
     return Command(
-        update={filtered_orders},
+        update={"filtered_orders": filtered_orders},
         goto=END
     )
+
+workflow = StateGraph(AgentState)
+workflow.add_node("parse_request_filters", parse_request_filters)
+workflow.add_node("get_orders", get_orders)
+workflow.add_node("parse_orders", parse_orders)
+workflow.add_node("filter_orders", filter_orders)
+
+
+workflow.add_edge(START, "parse_request_filters")
+app = workflow.compile()
+
+def main():
+    request = input("What would you like to do? ")
+    initial_state = AgentState(user_request = request)
+    result = app.invoke(initial_state)
+
+    print(result["filtered_orders"])
+
+if __name__ == "__main__":
+    main()
