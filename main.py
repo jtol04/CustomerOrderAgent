@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 from dotenv import load_dotenv
 from typing import Optional, List
@@ -139,7 +140,10 @@ def main():
     initial_state = AgentState(user_request = request)
     result = app.invoke(initial_state)
 
-    print(result["filtered_orders"])
+    filtered_orders = result["filtered_orders"]
+    output = {"orders": [order.model_dump() for order in filtered_orders]}
+
+    print(json.dumps(output, indent=2))
 
 if __name__ == "__main__":
     main()
