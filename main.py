@@ -16,28 +16,41 @@ llm = ChatOpenAI(
     temperature=0,
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
-    timeout=30,
-    max_retries=2
+    timeout=10,
+    max_retries=4
 )
 
 class Order(BaseModel):
     order_num: str = Field(description="The order number exactly as it appears, e.g. 1001, 1002, etc")
-    buyer: str = Field(description="The buyer's complete full name given, e.g. 'Chris Myers, etc'")
+    buyer: str = Field(description="The buyer's complete name given, e.g. 'Chris Myers, etc'")
     city: str = Field(description="The city name only, e.g. 'Columbus', 'Seattle', etc")
     state: str = Field(description="The state within the order location. This MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', etc")
-    total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits, e.g. '156.55', '512.00', etc")
+    total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits, e.g. 156.55, 512.00, etc")
     items: List[str] = Field(description="Complete list of items preserving all full names, e.g. 'coffee maker, monitor', 'desk lamp', etc")
 
 class RequestFilters(BaseModel):
-    min_total: Optional[float] = Field(default=None, description="The complete MINIMUM price requested by the user, e.g. '89.50', '742.10', etc")
-    max_total: Optional[float] = Field(default=None, description="The complete MAXIMUM price requested by the user e.g. '156.55', '1299.99', etc")
-    city: Optional[str] = Field(default=None, description="The city name only e.g. 'Columbus', 'Seattle', etc")
+    min_total: Optional[float] = Field(default=None, description="The complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc")
+    max_total: Optional[float] = Field(default=None, description="The complete MAXIMUM price requested by the user e.g. 156.55, 1299.99, etc")
+    city: Optional[str] = Field(default=None, description="The city name only e.g. 'Columbus', 'Seattle', 'New York City', etc")
     state: Optional[str] =Field(default=None, description="The state, which MUST evaluate to its two letter version e.g. 'NY', 'VA', 'OH', etc")
-    buyer: Optional[str] = Field(default=None, descrption="The COMPLETE name of the buyer, e.g. 'Chris Myers', 'John', 'Rachel Kim', etc")
+    buyer: Optional[str] = Field(default=None, description="The COMPLETE name of the buyer, e.g. 'Chris Myers', 'John', 'Rachel Kim', etc")
     items: Optional[List[str]] = Field(default=None, description = "The item/s being asked for within the order, e.g. 'coffee maker, headphones', etc")
+    
+    
+    invalid: bool = Field(
+        default=False, 
+        description ="""Classify whether the request can be answered with supported filters.
+Rules:
+1. Set False if the request asks for all orders: 'show all orders', 'list orders', 'get orders', 'show me orders'.
+2. Set False if the request mentions: a price, price range, US city, US state, buyer name, or item keyword.
+3. Set True if the request mentions non-US locations (e.g. 'Japan', 'Europe').
+4. Set True if the request mentions time or dates (e.g. 'last week', 'yesterday').
+5. Set True if the request mentions attributes not in the schema (e.g. color, shipping method).
+6. When uncertain, default to False."""
+        )
+    
 
 class AgentState(BaseModel):
-    # Raw request data
     user_request: str
     raw_orders: List[str] = []
     parsed_filters: Optional[RequestFilters] = None
@@ -50,24 +63,37 @@ def parse_request_filters(state: AgentState):
     structured_llm = llm.with_structured_output(RequestFilters)
 
     prompt = f"""
-    Analyze this customer request and get the filters being passed:
-
-    Request: {state.user_request}
-    
-    Provide filters passed, which may include min_total, max_total, city,
-    state (two letters), buyer, and items. Note that these are optional.
+Analyze this customer request and get the filters being passed:
+Request: {state.user_request}
+Rules:
+1. min_total is the complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc.
+2. max_total is the complete MAXIMUM price requested by the user e.g. 156.55, 1299.99, etc.
+3. city is a US city name e.g. 'Columbus', 'Seattle', 'New York City', etc.
+4. state is a US state. this MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', etc
+5. buyer is the COMPLETE name of the buyer. If it is just a first name or last name, parse this name still.
+as a buyer e.g. 'Chris Myers', 'Chris', 'Myers', 'John', 'Rachel Kim', etc.
+6. items is the items being asked for within the order, e.g. 'coffee maker', 'headphones', etc.
+7. invalid classifies whether the request can be answered with supported filters (True or False).
+8. these filters are optional, except for invalid bool which is default to False.
     """
 
     parsed_filters = structured_llm.invoke(prompt)
+
+    if parsed_filters.invalid:
+        logging.warning("INVALID REQUEST: Does not include a valid min_total, max_total, city, state, buyer, or items filter.")
+        next_node = END
+    else:
+        next_node = "get_orders"
 
     # add error check and validation here
     logging.info(f"parsed_filters: {parsed_filters}")
     return Command(
         update={"parsed_filters": parsed_filters},
-        goto="get_orders"
+        goto=next_node
     )
 
 def get_orders(state: AgentState):
+    """Fetch orders from dummy customer API"""
     response = requests.get('http://localhost:5001/api/orders')
     data = response.json()
     logging.info(response.status_code)
@@ -81,27 +107,26 @@ def get_orders(state: AgentState):
     )
 
 def parse_orders(state: AgentState):
-    """Use the LLM to structure orders"""
+    """Use the LLM to parse orders"""
     structured_llm = llm.with_structured_output(Order)
     parsed_orders = []
     for raw_order in state.raw_orders:
-        logging.info(f"current raw order being parsed: {raw_order}")
+        logging.info(f"RAW_ORDER being parsed: {raw_order}")
         prompt = f"""
-        Analyze this order.
+Extract structured data from this order text.
 
-        Order: {raw_order}
+Order: {raw_order}
         
-        Provide the order number, buyer name, city, state, total_price,
-        and the list of items.
+Provide the order_num, buyer, city, state (two letter US state), total_price, and items (list).
         """
         
         try: 
             order = structured_llm.invoke(prompt)
             parsed_orders.append(order)
-            logging.info(f"parsed order: {order}")
+            logging.info(f"PARSED_ORDER: {order}")
         except Exception as e:
-            logging.warning(f"Failed to parse order for {raw_order} | Error: {e}")
-    
+            logging.warning(f"Failed to parse RAW_ORDER for {raw_order} | Error: {e}")
+            
     #logging.info(f"parsed_orders: {parsed_orders}")
     
     return Command(
@@ -111,6 +136,7 @@ def parse_orders(state: AgentState):
 
 
 def filter_orders(state: AgentState):
+    """Filter the orders based on filters applied"""
     filtered_orders = []
     for item in state.parsed_orders:
         if state.parsed_filters.min_total is not None and item.total_price < state.parsed_filters.min_total:
@@ -130,6 +156,7 @@ def filter_orders(state: AgentState):
                 continue
 
         filtered_orders.append(item)
+        logging.info(f"ORDER {item} added to FILTERED_ORDERS")
     
     return Command(
         update={"filtered_orders": filtered_orders},
@@ -147,7 +174,7 @@ workflow.add_edge(START, "parse_request_filters")
 app = workflow.compile()
 
 def main():
-    request = input("What would you like to do? ")
+    request = input("Hello! What orders you like to see? ")
     initial_state = AgentState(user_request = request)
     result = app.invoke(initial_state)
 
