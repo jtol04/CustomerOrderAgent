@@ -1,10 +1,13 @@
 import os
+import requests
 from dotenv import load_dotenv
+from typing import Optional, List
+from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain.messages import HumanMessage
 from langgraph.types import Command
-from typing import Optional, List
-from pydantic import BaseModel, Field
+from langgraph.graph import START, END, StateGraph
+
 
 load_dotenv()
 OPENROUTER_API_KEY= os.getenv("OPENROUTER_API_KEY")
@@ -34,7 +37,7 @@ class AgentState(BaseModel):
     # Raw request data
     user_request: str
     raw_orders: List[str]
-    filters: RequestFilters
+    parsed_filters: RequestFilters
     parsed_orders: List[Order]
 
 request = input("What would you like to do? ")
@@ -42,38 +45,49 @@ request = input("What would you like to do? ")
 def read_request(state: AgentState) -> dict:
     """Extract and parse request content"""
 
-    state['user_request'] = request
+    state.user_request = request
     return {
-        "messages": [HumanMessage(content=f"Processing request: {state['user_request']}")]
+        "messages": [HumanMessage(content=f"Processing request: {state.user_request}")]
     }
 
-def get_request_filters(state: AgentState):
+def parse_request_filters(state: AgentState):
     """Use the LLM to get request filters"""
     structured_llm = llm.with_structured_output(RequestFilters)
 
     prompt = f"""
     Analyze this customer request and get the filters being passed:
 
-    Request: {state['user_request']}
+    Request: {state.user_request}
     
-    Provide optional filters passed including min_total, max_total, location,
-    buyer, and items.
+    Provide filters passed, which may include min_total, max_total, location,
+    buyer, and items. Note that these are optional.
     """
 
-    filters = structured_llm.invoke(prompt)
+    parsed_filters = structured_llm.invoke(prompt)
 
     # add error check and validation here
 
     return Command(
-        update={"filters": filters},
-        goto="parse_orders"
+        update={"parsed_filters": parsed_filters},
+        goto="get_orders"
+    )
+
+def get_orders(state: AgentState):
+    response = requests.get('http://localhost:5001/api/orders')
+    data = response.json()
+    print(response.status_code)
+    print(data["raw_orders"])
+    
+    return Command(
+        update={"raw_orders": data["raw_orders"]},
+        goto=parse_orders
     )
 
 def parse_orders(state: AgentState):
     """Use the LLM to structure orders"""
     structured_llm = llm.with_structured_output(Order)
     parsed_orders = []
-    for raw_order in state['raw_orders']:
+    for raw_order in state.raw_orders:
         prompt = f"""
         Analyze this order.
 
@@ -89,3 +103,18 @@ def parse_orders(state: AgentState):
         goto="filter_orders"
     )
 
+
+def filter_orders(state: AgentState):
+    filtered_orders = [
+        item for item in state.parsed_orders
+        if (state.parsed_filters.min_total is None or item.total_price >= state.parsed_filters.min_total)
+        and (state.parsed_filters.max_total is None or item.total_price <= state.parsed_filtersmax_total)
+        and (state.parsed_filters.location is None or item.location == state.parsed_filters.location)
+        and (state.parsed_filters.buyer is None or item.buyer == state.parsed_filters.buyer)
+        and (state.parsed_filters.items is None or item.items in state.parsed_filters.items)
+    ]
+    
+    return Command(
+        update={filtered_orders},
+        goto=END
+    )
