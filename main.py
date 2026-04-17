@@ -36,7 +36,7 @@ class RequestFilters(BaseModel):
     buyer: Optional[str] = Field(default=None, description="The COMPLETE name of the buyer, e.g. 'Chris Myers', 'John', 'Rachel Kim', etc")
     items: Optional[List[str]] = Field(default=None, description = "The item/s being asked for within the order, e.g. 'coffee maker, headphones', etc")
     order_num: Optional[int] = Field(default=None, description = "The order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc")
-    
+    limit: Optional[int] = Field(default=None, description = "The quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
     invalid: bool = Field(
         default=False, 
         description ="""Classify whether the request can be answered with supported filters.
@@ -75,13 +75,14 @@ as a buyer e.g. 'Chris Myers', 'Chris', 'Myers', 'John', 'Rachel Kim', etc.
 6. items is the items being asked for within the order, e.g. 'coffee maker', 'headphones', etc.
 7. invalid classifies whether the request can be answered with supported filters (True or False).
 8. order_num is the rder_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc
-9. these filters are optional, except for invalid bool which is default to False.
+9. limit is the quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
+10. these filters are optional, except for invalid bool which is default to False.
     """
 
     parsed_filters = structured_llm.invoke(prompt)
 
     if parsed_filters.invalid:
-        logging.warning("INVALID REQUEST: Does not include a valid min_total, max_total, city, state, buyer, or items filter.")
+        logging.warning("INVALID REQUEST: Does not include a valid min_total, max_total, city, state, buyer, items, order_num or quantity filter.")
         next_node = END
     else:
         next_node = "get_orders"
@@ -105,7 +106,8 @@ def get_orders(state: AgentState):
             raw_orders = []
 
     else:
-        response = requests.get('http://localhost:5001/api/orders')
+        limit = state.parsed_filters.limit
+        response = requests.get('http://localhost:5001/api/orders', params={"limit": limit} if limit else {})
         data = response.json()
         if data["status"] == "ok":
             raw_orders = data["raw_orders"]
@@ -208,9 +210,12 @@ def main():
     result = app.invoke(initial_state)
 
     filtered_orders = result["filtered_orders"]
-    output = {"orders": [order.model_dump() for order in filtered_orders]}
 
-    print(json.dumps(output, indent=2))
+    if not filtered_orders:
+        print("Order not found.")
+    else:
+        output = {"orders": [order.model_dump() for order in filtered_orders]}
+        print(json.dumps(output, indent=2))
 
 if __name__ == "__main__":
     main()
