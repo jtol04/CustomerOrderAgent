@@ -16,7 +16,7 @@ llm = ChatOpenAI(
     temperature=0,
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
-    timeout=10,
+    timeout=5,
     max_retries=4
 )
 
@@ -113,15 +113,28 @@ def parse_orders(state: AgentState):
     for raw_order in state.raw_orders:
         logging.info(f"RAW_ORDER being parsed: {raw_order}")
         prompt = f"""
-Extract structured data from this order text.
-
+Extract structured data from this order text. Preserve all values exactly.
 Order: {raw_order}
-        
-Provide the order_num, buyer, city, state (two letter US state), total_price, and items (list).
+You must get the order_num, buyer, city, state, total_price, and items (list).
         """
         
         try: 
             order = structured_llm.invoke(prompt)
+
+            # preventing hallicination
+            raw_lower = raw_order.lower()
+            if order.order_num not in raw_order:
+                raise ValueError(f"order_num '{order.order_num}' not in RAW_ORDER")
+            if order.buyer.lower() not in raw_lower:
+                raise ValueError(f"buyer '{order.buyer}' not in RAW_ORDER")
+            if order.city.lower() not in raw_lower:
+                raise ValueError(f"city '{order.city}' not in RAW_ORDER")
+            if f"{order.total_price:.2f}" not in raw_order:
+                raise ValueError(f"total_price {order.total_price} not in RAW_ORDER")
+            for item in order.items:
+                if item.lower() not in raw_lower:
+                    raise ValueError(f"item '{item}' not in RAW_ORDER")
+                
             parsed_orders.append(order)
             logging.info(f"PARSED_ORDER: {order}")
         except Exception as e:
