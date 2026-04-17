@@ -16,7 +16,7 @@ llm = ChatOpenAI(
     temperature=0,
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
-    timeout=5,
+    timeout=15,
     max_retries=4
 )
 
@@ -35,14 +35,14 @@ class RequestFilters(BaseModel):
     state: Optional[str] =Field(default=None, description="The state, which MUST evaluate to its two letter version e.g. 'NY', 'VA', 'OH', etc")
     buyer: Optional[str] = Field(default=None, description="The COMPLETE name of the buyer, e.g. 'Chris Myers', 'John', 'Rachel Kim', etc")
     items: Optional[List[str]] = Field(default=None, description = "The item/s being asked for within the order, e.g. 'coffee maker, headphones', etc")
-    
+    order_num: Optional[int] = Field(default=None, description = "The order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc")
     
     invalid: bool = Field(
         default=False, 
         description ="""Classify whether the request can be answered with supported filters.
 Rules:
 1. Set False if the request asks for all orders: 'show all orders', 'list orders', 'get orders', 'show me orders'.
-2. Set False if the request mentions: a price, price range, US city, US state, buyer name, or item keyword.
+2. Set False if the request mentions: a price, price range, US city, US state, buyer name, item keyword, order number, or order num.
 3. Set True if the request mentions non-US locations (e.g. 'Japan', 'Europe').
 4. Set True if the request mentions time or dates (e.g. 'last week', 'yesterday').
 5. Set True if the request mentions attributes not in the schema (e.g. color, shipping method).
@@ -74,7 +74,8 @@ Rules:
 as a buyer e.g. 'Chris Myers', 'Chris', 'Myers', 'John', 'Rachel Kim', etc.
 6. items is the items being asked for within the order, e.g. 'coffee maker', 'headphones', etc.
 7. invalid classifies whether the request can be answered with supported filters (True or False).
-8. these filters are optional, except for invalid bool which is default to False.
+8. order_num is the rder_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc
+9. these filters are optional, except for invalid bool which is default to False.
     """
 
     parsed_filters = structured_llm.invoke(prompt)
@@ -94,11 +95,24 @@ as a buyer e.g. 'Chris Myers', 'Chris', 'Myers', 'John', 'Rachel Kim', etc.
 
 def get_orders(state: AgentState):
     """Fetch orders from dummy customer API"""
-    response = requests.get('http://localhost:5001/api/orders')
-    data = response.json()
-    logging.info(response.status_code)
-    raw_orders = data["raw_orders"]
 
+    if state.parsed_filters.order_num is not None:
+        response = requests.get(f'http://localhost:5001/api/order/{state.parsed_filters.order_num}')
+        data = response.json()
+        if data["status"] == "ok":
+            raw_orders = [data["raw_order"]]
+        else :
+            raw_orders = []
+
+    else:
+        response = requests.get('http://localhost:5001/api/orders')
+        data = response.json()
+        if data["status"] == "ok":
+            raw_orders = data["raw_orders"]
+        else :
+            raw_orders = []
+
+    logging.info(response.status_code)
     logging.info(f"raw_orders: {raw_orders}")
     
     return Command(
@@ -167,6 +181,8 @@ def filter_orders(state: AgentState):
             requested_lower = {i.lower() for i in state.parsed_filters.items}
             if not requested_lower.intersection(order_items_lower):
                 continue
+        if state.parsed_filters.order_num is not None and str(state.parsed_filters.order_num) != item.order_num:
+            continue
 
         filtered_orders.append(item)
         logging.info(f"ORDER {item} added to FILTERED_ORDERS")
