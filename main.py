@@ -22,14 +22,16 @@ llm = ChatOpenAI(
 class Order(BaseModel):
     order_num: str = Field(description="The order number")
     buyer: str = Field(description="The buyer's name")
-    location: str = Field(description="The location")
+    city: str = Field(description="The city within the order location")
+    state: str = Field(description="The state within the order location. This MUST to its two letter version e.g. VA, CA, NY")
     total_price: float = Field(description="The total price")
     items: List[str] = Field(description="The list of items")
 
 class RequestFilters(BaseModel):
     min_total: Optional[float] = None
     max_total: Optional[float] = None
-    location: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
     buyer: Optional[str] = None
     items: Optional[List[str]] = None
 
@@ -51,14 +53,14 @@ def parse_request_filters(state: AgentState):
 
     Request: {state.user_request}
     
-    Provide filters passed, which may include min_total, max_total, location,
-    buyer, and items. Note that these are optional.
+    Provide filters passed, which may include min_total, max_total, city,
+    state (two letters), buyer, and items. Note that these are optional.
     """
 
     parsed_filters = structured_llm.invoke(prompt)
 
     # add error check and validation here
-
+    print(parsed_filters)
     return Command(
         update={"parsed_filters": parsed_filters},
         goto="get_orders"
@@ -85,7 +87,7 @@ def parse_orders(state: AgentState):
 
         Order: {raw_order}
         
-        Provide the order_num, buyer, location, total_price,
+        Provide the order_num, buyer, city, state, total_price,
         and the list of items.
         """
         parsed_orders.append(structured_llm.invoke(prompt))
@@ -97,14 +99,25 @@ def parse_orders(state: AgentState):
 
 
 def filter_orders(state: AgentState):
-    filtered_orders = [
-        item for item in state.parsed_orders
-        if (state.parsed_filters.min_total is None or item.total_price >= state.parsed_filters.min_total)
-        and (state.parsed_filters.max_total is None or item.total_price <= state.parsed_filters.max_total)
-        and (state.parsed_filters.location is None or item.location == state.parsed_filters.location)
-        and (state.parsed_filters.buyer is None or item.buyer == state.parsed_filters.buyer)
-        and (state.parsed_filters.items is None or item.items in state.parsed_filters.items)
-    ]
+    filtered_orders = []
+    for item in state.parsed_orders:
+        if state.parsed_filters.min_total is not None and item.total_price < state.parsed_filters.min_total:
+            continue
+        if state.parsed_filters.max_total is not None and item.total_price > state.parsed_filters.max_total:
+            continue
+        if state.parsed_filters.city is not None and state.parsed_filters.city.lower() != item.city.lower():
+            continue
+        if state.parsed_filters.state is not None and state.parsed_filters.state.upper() != item.state.upper():
+            continue
+        if state.parsed_filters.buyer is not None and state.parsed_filters.buyer.lower() not in item.buyer.lower():
+            continue
+        if state.parsed_filters.items is not None:
+            order_items_lower = {i.lower() for i in item.items}
+            requested_lower = {i.lower() for i in state.parsed_filters.items}
+            if not requested_lower.intersection(order_items_lower):
+                continue
+
+        filtered_orders.append(item)
     
     return Command(
         update={"filtered_orders": filtered_orders},
