@@ -134,7 +134,7 @@ def parse_orders(state: AgentState):
         prompt = f"""
 Extract structured data from this order text. Preserve all values exactly.
 Order: {raw_order}
-You must get the order_num, buyer, city, state, total_price (MUST BE two decimal places), and items (list).
+You must get the order_num, buyer, city, state, total_price, and items (list).
         """
         
         try: 
