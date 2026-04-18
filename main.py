@@ -16,8 +16,8 @@ llm = ChatOpenAI(
     temperature=0,
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
-    timeout=15,
-    max_retries=4
+    timeout=30.0,
+    max_retries=2
 )
 
 class Order(BaseModel):
@@ -25,7 +25,8 @@ class Order(BaseModel):
     buyer: str = Field(description="The buyer's complete name given, e.g. 'Chris Myers, etc'")
     city: str = Field(description="The city name only, e.g. 'Columbus', 'Seattle', etc")
     state: str = Field(description="The state within the order location. This MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', etc")
-    total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits, e.g. 156.55, 512.00, etc")
+    total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits and " \
+                                            "two decimal points, e.g. 156.55, 512.00, etc")
     items: List[str] = Field(description="Complete list of items preserving all full names, e.g. 'coffee maker, monitor', 'desk lamp', etc")
 
 class RequestFilters(BaseModel):
@@ -46,7 +47,8 @@ Rules:
 3. Set True if the request mentions non-US locations (e.g. 'Japan', 'Europe').
 4. Set True if the request mentions time or dates (e.g. 'last week', 'yesterday').
 5. Set True if the request mentions attributes not in the schema (e.g. color, shipping method).
-6. When uncertain, default to False."""
+6. Set True if any malicious intent is detected (e.g. delete all orders) or anything unrelated to being a customer order agent chatbot.
+7. When uncertain, default to False."""
         )
     
 
@@ -63,7 +65,7 @@ def parse_request_filters(state: AgentState):
     structured_llm = llm.with_structured_output(RequestFilters)
 
     prompt = f"""
-Analyze this customer request and get the filters being passed:
+You are an customer order chatbot agent. Analyze this customer request and get the filters being passed:
 Request: {state.user_request}
 Rules:
 1. min_total is the complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc.
@@ -72,11 +74,12 @@ Rules:
 4. state is a US state. this MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', etc
 5. buyer is the COMPLETE name of the buyer. If it is just a first name or last name, parse this name still.
 as a buyer e.g. 'Chris Myers', 'Chris', 'Myers', 'John', 'Rachel Kim', etc.
-6. items is the items being asked for within the order, e.g. 'coffee maker', 'headphones', etc.
-7. invalid classifies whether the request can be answered with supported filters (True or False).
-8. order_num is the rder_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc
-9. limit is the quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
-10. these filters are optional, except for invalid bool which is default to False.
+6. items is the list of items being asked for within the order, e.g. 'coffee maker', 'headphones', etc.
+7. order_num is the order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc
+8. limit is the quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
+9. these filters are optional, except for invalid bool which is default to False.
+10. invalid classifies whether the request can be answered with supported filters, or if 
+the request is anything unrelated to being a chatbot, or tries to modify or create orders (True or False).
     """
 
     parsed_filters = structured_llm.invoke(prompt)
@@ -131,7 +134,7 @@ def parse_orders(state: AgentState):
         prompt = f"""
 Extract structured data from this order text. Preserve all values exactly.
 Order: {raw_order}
-You must get the order_num, buyer, city, state, total_price, and items (list).
+You must get the order_num, buyer, city, state, total_price (MUST BE two decimal places), and items (list).
         """
         
         try: 
