@@ -129,19 +129,18 @@ def parse_orders(state: AgentState):
     """Use the LLM to parse orders"""
     structured_llm = llm.with_structured_output(Order)
     parsed_orders = []
-    for raw_order in state.raw_orders:
-        logging.info(f"RAW_ORDER being parsed: {raw_order}")
-        prompt = f"""
-Extract structured data from this order text. Preserve all values exactly.
-Order: {raw_order}
-You must get the order_num, buyer, city, state, total_price, and items (list).
-        """
-        
-        try: 
-            order = structured_llm.invoke(prompt)
 
+        
+    prompts = [f""" Extract structured data from this order text. Preserve all values exactly. Order: {raw_order}
+               You must get the order_num, buyer, city, state, total_price, and items (list).""" for raw_order in state.raw_orders]
+    
+    orders = structured_llm.batch(prompts)
+
+    for order, raw_order in zip(orders, state.raw_orders):
+        try: 
             # preventing hallicination
             raw_lower = raw_order.lower()
+            
             if order.order_num not in raw_order:
                 raise ValueError(f"order_num '{order.order_num}' not in RAW_ORDER")
             if order.buyer.lower() not in raw_lower:
@@ -153,7 +152,6 @@ You must get the order_num, buyer, city, state, total_price, and items (list).
             for item in order.items:
                 if item.lower() not in raw_lower:
                     raise ValueError(f"item '{item}' not in RAW_ORDER")
-                
             parsed_orders.append(order)
             logging.info(f"PARSED_ORDER: {order}")
         except Exception as e:
