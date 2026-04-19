@@ -8,6 +8,8 @@ from langgraph.graph import START, END, StateGraph
 
 import pandas as pd
 from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 
 load_dotenv()
@@ -166,6 +168,7 @@ def parse_orders(state: AgentState):
                     raise ValueError(f"item '{item}' not in RAW_ORDER")
                 
             row = {
+                "order_num": order.order_num,
                 "tech_count": order.tech_count,
                 "accessory_count": order.accessory_count,
                 "audio_count": order.audio_count,
@@ -192,7 +195,23 @@ def parse_orders(state: AgentState):
 def train_model(state: AgentState):
     """Train the Linear Regression model on raw parsed orders"""
     df = pd.DataFrame(state.rows)
-    print(df)
+    X = df[['tech_count', 'accessory_count', 'audio_count', 'homegoods_count']]
+    y = df['total_price']
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state = 2)
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+    
+    print(f"Coefficient (Slope): {model.coef_[0]}, Intercept: {model.intercept_}")
+    y_pred = model.predict(X_test)
+    predictions = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
+    print(predictions.head())
+
+    mae = mean_absolute_error(y_test, y_pred)
+    mse = mean_squared_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+    print(f"score: {model.score(X_test, y_test)}, MAE: {mae}, MSE: {mse}, R2: {r2}")
+
 
     # next steps: 
     return Command(
