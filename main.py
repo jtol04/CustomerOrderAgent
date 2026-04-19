@@ -6,10 +6,13 @@ from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 from langgraph.graph import START, END, StateGraph
 
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
 
 load_dotenv()
 OPENROUTER_API_KEY= os.getenv("OPENROUTER_API_KEY")
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
 llm = ChatOpenAI(
     model="openai/gpt-oss-120b:exacto",
@@ -28,6 +31,12 @@ class Order(BaseModel):
     total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits and " \
                                             "two decimal points, e.g. 156.55, 512.00, etc")
     items: List[str] = Field(description="Complete list of items preserving all full names, e.g. 'coffee maker, monitor', 'desk lamp', etc")
+
+    # per-category item category count
+    tech_count: int = Field(default=0, description="The total number of times 'laptop', 'gaming pc', and 'monitor' appear in the Items list")
+    accessory_count: int = Field(default=0, description="The total number of times 'hdmi cable', 'mouse', and 'keyboard' appear in the Items list")
+    audio_count: int = Field(default=0, description="The total number of times 'headphones' and 'earphones' appear in the Items list")
+    homegoods_count: int = Field(default=0, description="The total number of times 'coffee maker' and 'desk lamp' appear in the Items list")
 
 class RequestFilters(BaseModel):
     min_total: Optional[float] = Field(default=None, description="The complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc")
@@ -63,7 +72,7 @@ class AgentState(BaseModel):
 def parse_request_filters(state: AgentState):
     """Use the LLM to get request filters"""
     structured_llm = llm.with_structured_output(RequestFilters)
-
+    #TODO: put prompt in a txt file
     prompt = f"""
 You are an customer order chatbot agent. Analyze this customer request and get the filters being passed:
 Request: {state.user_request}
@@ -131,8 +140,9 @@ def parse_orders(state: AgentState):
     parsed_orders = []
 
         
-    prompts = [f""" Extract structured data from this order text. Preserve all values exactly. Order: {raw_order}
-               You must get the order_num, buyer, city, state, total_price, and items (list).""" for raw_order in state.raw_orders]
+    prompts = [f"""Extract structured data from this order text. Preserve all values exactly. Order: {raw_order}
+               You must get the order_num, buyer, city, state, total_price, items (list), tech_count, accessory_count,
+               audio_count, and homegoods_count.""" for raw_order in state.raw_orders]
     
     orders = structured_llm.batch(prompts)
 
@@ -155,6 +165,7 @@ def parse_orders(state: AgentState):
             parsed_orders.append(order)
             logging.info(f"PARSED_ORDER: {order}")
         except Exception as e:
+            logging.warning(f"FAILED_ORDER: {order}")
             logging.warning(f"Failed to parse RAW_ORDER for {raw_order} | Error: {e}")
             
     #logging.info(f"parsed_orders: {parsed_orders}")
