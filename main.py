@@ -1,12 +1,10 @@
 import os, json, requests, logging
 from dotenv import load_dotenv
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 from langgraph.graph import START, END, StateGraph
-from langchain.tools import tool
-#TODO: use tools
 
 import pandas as pd
 from sklearn.linear_model import LinearRegression
@@ -27,6 +25,7 @@ llm = ChatOpenAI(
     max_retries=2
 )
 
+
 class Order(BaseModel):
     order_num: str = Field(description="The order number exactly as it appears, e.g. 1001, 1002, etc")
     buyer: str = Field(description="The buyer's complete name given, e.g. 'Chris Myers, etc'")
@@ -36,14 +35,8 @@ class Order(BaseModel):
                                             "two decimal points, e.g. 156.55, 512.00, etc")
     items: List[str] = Field(description="Complete list of items preserving all full names, e.g. 'coffee maker, monitor', 'desk lamp', etc")
 
-    # per-category item category count
-    tech_count: int = Field(default=0, description="The total number of times 'laptop', 'gaming pc', and 'monitor' appear in the Items list")
-    accessory_count: int = Field(default=0, description="The total number of times 'hdmi cable', 'mouse', and 'keyboard' appear in the Items list")
-    audio_count: int = Field(default=0, description="The total number of times 'headphones' and 'earphones' appear in the Items list")
-    homegoods_count: int = Field(default=0, description="The total number of times 'coffee maker' and 'desk lamp' appear in the Items list")
 
 class RequestFilters(BaseModel):
-    #TODO: figure out if it makes more sense to parse prediction filter here
     min_total: Optional[float] = Field(default=None, description="The complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc")
     max_total: Optional[float] = Field(default=None, description="The complete MAXIMUM price requested by the user e.g. 156.55, 1299.99, etc")
     city: Optional[str] = Field(default=None, description="The city name only e.g. 'Columbus', 'Seattle', 'New York City', etc")
@@ -52,56 +45,69 @@ class RequestFilters(BaseModel):
     items: Optional[List[str]] = Field(default=None, description = "The item/s being asked for within the order, e.g. 'coffee maker, headphones', etc")
     order_num: Optional[int] = Field(default=None, description = "The order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc")
     limit: Optional[int] = Field(default=None, description = "The quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
-    predict: bool = Field(
-        default=False,
-        description="""
-Classify whether the request is asking about a price prediction for a given number of product categories (e.g. tech, accessories, audio,
-homegoods) and quantities for each category. Set True if the request is asking for a price prediction. Otherwise, set to False.
-        """
-    )
-    invalid: bool = Field(
-        default=False, 
-        description="""
-Classify whether the request can be answered with supported filters. Rules:
-1. Set False if the request asks for all orders: 'show all orders', 'list orders', 'get orders', 'show me orders'.
-2. Set False if the request mentions: a price, price range, US city, US state, buyer name, item keyword, order number, or order num.
-3. 
-4. Set True if the request mentions non-US locations (e.g. 'Japan', 'Europe').
-5. Set True if the request mentions time or dates (e.g. 'last week', 'yesterday').
-6. Set True if the request mentions attributes not in the schema (e.g. color, shipping method).
-7. Set True if any malicious intent is detected (e.g. delete all orders) or anything unrelated to being a customer order agent chatbot.
-8. When uncertain, default to False.
-        """
-    )
 
-class PredictionRequest(BaseModel):
-    tech_count: int = Field(
-        default=0,
-        description="The total number of times 'tech', 'laptop', 'gaming pc', and 'monitor' appear in the prediction request"
-    )
-    accessory_count: int = Field(
-        default=0,
-        description="The total number of times 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard' appear in the prediction request"
-    )
-    audio_count: int = Field(
-        default=0, 
-        description="The total number of times 'audio', 'headphones' and 'earphones' appear in the prediction request"
-    )
-    homegoods_count: int = Field(
-        default=0, 
-        description="The total number of times 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request"
+class RequestType(BaseModel):
+    request_type: Literal["order", "prediction", "invalid"] = Field(
+        description=(
+            "classify the request into exactly one category. read the request carefully.\n"
+            "'prediction' - the user asks how much, cost, or price for a hypothetical basket. "
+            "signal phrases. 'how much would', 'predict the price of', 'what would X cost', 'estimate'. "
+            "examples: 'how much would 3 tech items cost', 'predict price for a laptop order', "
+            "'how much would 5 tech items and 1 homegoods cost'.\n"
+            "'order' — the user asks to list, show, retrieve, or filter actual orders. "
+            "signal phrases: 'show me', 'list', 'get all', 'orders in', 'orders by', 'orders over'. "
+            "examples: 'show me all orders', 'orders in Ohio', 'orders over $500'.\n"
+            "'invalid' — any request unrelated to customer orders, or attempts to modify orders."
+        )
     )
 
 class AgentState(BaseModel):
     user_request: str
     raw_orders: List[str] = []
+    parsed_request_type: RequestType = None
     parsed_filters: Optional[RequestFilters] = None
-    prediction_request: Optional[PredictionRequest] = None
     parsed_orders: List[Order] = []
-    filtered_orders: List[Order]= []
     category_counts: List[dict] = []
-    prediction: Optional[float] = None
-    
+    filtered_orders: List[Order]= []
+    price_prediction: Optional[float] = None
+
+class PredictionRequest(BaseModel):
+    tech_count: int = Field(default=0, description="The total number of times 'tech', 'laptop', 'gaming pc', and 'monitor' appear in the prediction request")
+    accessory_count: int = Field(default=0, description="The total number of times 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard' appear in the prediction request")
+    audio_count: int = Field(default=0, description="The total number of times 'audio', 'headphones' and 'earphones' appear in the prediction request")
+    homegoods_count: int = Field(default=0, description="The total number of times 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request")
+
+
+def parse_request_type(state: AgentState):
+    """Use the LLM to parse request type"""
+    structured_llm = llm.with_structured_output(RequestType)
+    prompt = (
+        "Classify the user's request type.\n"
+        f"Request: {state.user_request}\n"
+        "Classification rules:\n"
+        "- 'prediction' if the user asks how much, cost, or price for a hypothetical basket "
+        "(signals: 'how much would', 'predict the price of', 'what would X cost', 'estimate').\n"
+        "- 'order' if the user asks to list, show, retrieve, or filter actual orders "
+        "(signals: 'show me', 'list', 'get all', 'orders in', 'orders by', 'orders over').\n"
+        "- 'invalid' for anything else non-order requests or attempts to modify or delete orders.\n"
+        "Examples:\n"
+        "- 'how much would 3 tech items cost' is a prediction\n"
+        "- 'how much would 5 tech items and 1 homegoods cost' is a prediction\n"
+        "- 'show me all orders in Ohio' is an order\n"
+        "- 'get orders over $500' is an order\n"
+        "- 'predict price for 2 laptops' is a prediction\n"
+        "- 'delete all orders' is invalid"
+    )
+    parsed_request_type = structured_llm.invoke(prompt)
+
+    logging.info(f"[parse_request_type]: {parsed_request_type}")
+
+
+
+    return Command(
+        update={"parsed_request_type": parsed_request_type},
+        goto=END
+    )
 
 
 def parse_request_filters(state: AgentState):
@@ -330,25 +336,24 @@ def filter_orders(state: AgentState):
     )
 
 workflow = StateGraph(AgentState)
+workflow.add_node("parse_request_type", parse_request_type)
+"""
 workflow.add_node("parse_request_filters", parse_request_filters)
 workflow.add_node("parse_prediction_request", parse_prediction_request)
 workflow.add_node("get_orders", get_orders)
 workflow.add_node("parse_orders", parse_orders)
 workflow.add_node("train_and_predict", train_and_predict)
 workflow.add_node("filter_orders", filter_orders)
+"""
 
-
-workflow.add_edge(START, "parse_request_filters")
+workflow.add_edge(START, "parse_request_type")
 app = workflow.compile()
 
 def main():
     request = input("Hello! What orders you like to see? ")
     initial_state = AgentState(user_request = request)
     result = app.invoke(initial_state)
-
-    if result["prediction"] is not None:
-        output = {"prediction": result["prediction"]}
-        return
+    """
     
     filtered_orders = result["filtered_orders"]
 
@@ -357,6 +362,7 @@ def main():
     else:
         output = {"orders": [order.model_dump() for order in filtered_orders]}
         print(json.dumps(output, indent=2))
+    """
 
 if __name__ == "__main__":
     main()
