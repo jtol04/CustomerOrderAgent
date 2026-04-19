@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 from langgraph.graph import START, END, StateGraph
 from langchain.tools import tool
+#TODO: use tools
 
 import pandas as pd
 from sklearn.linear_model import LinearRegression
@@ -53,23 +54,23 @@ class RequestFilters(BaseModel):
     limit: Optional[int] = Field(default=None, description = "The quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
     predict: bool = Field(
         default=False,
-        descrption="""
-        Classify whether the request is asking about a price prediction for a given number of product categories (e.g. tech, accessories, audio,
-        homegoods) and quantities for each category. Set True if the request is asking for a price prediction. Otherwise, set to False.
+        description="""
+Classify whether the request is asking about a price prediction for a given number of product categories (e.g. tech, accessories, audio,
+homegoods) and quantities for each category. Set True if the request is asking for a price prediction. Otherwise, set to False.
         """
     )
     invalid: bool = Field(
         default=False, 
         description="""
-        Classify whether the request can be answered with supported filters. Rules:
-        1. Set False if the request asks for all orders: 'show all orders', 'list orders', 'get orders', 'show me orders'.
-        2. Set False if the request mentions: a price, price range, US city, US state, buyer name, item keyword, order number, or order num.
-        3. 
-        4. Set True if the request mentions non-US locations (e.g. 'Japan', 'Europe').
-        5. Set True if the request mentions time or dates (e.g. 'last week', 'yesterday').
-        6. Set True if the request mentions attributes not in the schema (e.g. color, shipping method).
-        7. Set True if any malicious intent is detected (e.g. delete all orders) or anything unrelated to being a customer order agent chatbot.
-        8. When uncertain, default to False.
+Classify whether the request can be answered with supported filters. Rules:
+1. Set False if the request asks for all orders: 'show all orders', 'list orders', 'get orders', 'show me orders'.
+2. Set False if the request mentions: a price, price range, US city, US state, buyer name, item keyword, order number, or order num.
+3. 
+4. Set True if the request mentions non-US locations (e.g. 'Japan', 'Europe').
+5. Set True if the request mentions time or dates (e.g. 'last week', 'yesterday').
+6. Set True if the request mentions attributes not in the schema (e.g. color, shipping method).
+7. Set True if any malicious intent is detected (e.g. delete all orders) or anything unrelated to being a customer order agent chatbot.
+8. When uncertain, default to False.
         """
     )
 
@@ -99,6 +100,7 @@ class AgentState(BaseModel):
     parsed_orders: List[Order] = []
     filtered_orders: List[Order]= []
     category_counts: List[dict] = []
+    prediction: Optional[float] = None
     
 
 
@@ -106,22 +108,22 @@ def parse_request_filters(state: AgentState):
     """Use the LLM to get request filters"""
     structured_llm = llm.with_structured_output(RequestFilters)
     prompt = f"""
-    You are an customer order chatbot agent. Analyze this customer request and get the filters being passed:
-    Request: {state.user_request}
-    Rules:
-    1. min_total is the complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc.
-    2. max_total is the complete MAXIMUM price requested by the user e.g. 156.55, 1299.99, etc.
-    3. city is a US city name e.g. 'Columbus', 'Seattle', 'New York City', etc.
-    4. state is a US state. this MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', etc
-    5. buyer is the COMPLETE name of the buyer. If it is just a first name or last name, parse this name still.
-    as a buyer e.g. 'Chris Myers', 'Chris', 'Myers', 'John', 'Rachel Kim', etc.
-    6. items is the list of items being asked for within the order, e.g. 'coffee maker', 'headphones', etc.
-    7. order_num is the order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc
-    8. limit is the quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
-    9. these filters are optional, except for invalid bool and predict bool which both default to False
-    10. predict classifies whether the request asks for a price prediction given a category count (or multiple category counts).
-    11. invalid classifies whether the request can be answered with supported filters, or if 
-    the request is anything unrelated to being a chatbot, or tries to modify or create orders (True or False).
+You are an customer order chatbot agent. Analyze this customer request and get the filters being passed:
+Request: {state.user_request}
+Rules:
+1. min_total is the complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc.
+2. max_total is the complete MAXIMUM price requested by the user e.g. 156.55, 1299.99, etc.
+3. city is a US city name e.g. 'Columbus', 'Seattle', 'New York City', etc.
+4. state is a US state. this MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', etc
+5. buyer is the COMPLETE name of the buyer. If it is just a first name or last name, parse this name still.
+as a buyer e.g. 'Chris Myers', 'Chris', 'Myers', 'John', 'Rachel Kim', etc.
+6. items is the list of items being asked for within the order, e.g. 'coffee maker', 'headphones', etc.
+7. order_num is the order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc
+8. limit is the quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
+9. these filters are optional, except for invalid bool and predict bool which both default to False
+10. predict classifies whether the request asks for a price prediction given a category count (or multiple category counts).
+11. invalid classifies whether the request can be answered with supported filters, or if 
+the request is anything unrelated to being a chatbot, or tries to modify or create orders (True or False).
     """
 
     parsed_filters = structured_llm.invoke(prompt)
@@ -129,7 +131,7 @@ def parse_request_filters(state: AgentState):
     if parsed_filters.invalid:
         logging.warning("INVALID REQUEST: Does not include a valid min_total, max_total, city, state, buyer, items, order_num or quantity filter.")
         next_node = END
-    if parsed_filters.predict:
+    elif parsed_filters.predict:
         next_node = "parse_prediction_request"
     else:
         next_node = "get_orders"
@@ -144,40 +146,41 @@ def parse_request_filters(state: AgentState):
 def parse_prediction_request(state: AgentState):
     structured_llm = llm.with_structured_output(PredictionRequest)
     prompt = f"""
-    You are an customer order chatbot agent. Analyze this customer prediction and get the per category quantities passed:
-    Prediction Request: {state.user_request}. Rules:
-    1. tech_count is the total number of times 'tech', 'laptop', 'gaming pc', and 'monitor' appear in the prediction request
-    2. accessory_count is the total number of times 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard' appear
-    in the prediction request
-    3. audio_count is the total number of times 'audio', 'headphones' and 'earphones' appear in the prediction request
-    4. homegoods_count is the total number of times 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request
+You are an customer order chatbot agent. Analyze this customer prediction and get the per category quantities passed:
+Prediction Request: {state.user_request}. Rules:
+1. tech_count is the total number of times 'tech', 'laptop', 'gaming pc', and 'monitor' appear in the prediction request
+2. accessory_count is the total number of times 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard' appear
+in the prediction request
+3. audio_count is the total number of times 'audio', 'headphones' and 'earphones' appear in the prediction request
+4. homegoods_count is the total number of times 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request
     """
 
     output = structured_llm.invoke(prompt)
     if output.tech_count == 0 and output.accessory_count == 0 and output.audio_count == 0 and output.homegoods_count == 0:
-        logging.WARNING(f"INVALID PREDICTION REQUEST: Does not include any valid per-category counts.")
-        next_node = END
-    
-    next_node = "get_orders"
+        logging.warning(f"INVALID PREDICTION REQUEST: Does not include any valid per-category counts.")
+        return Command(goto=END)
+
+
     return Command(
         update={"prediction_request": output},
-        goto=next_node
+        goto="get_orders"
     )
 
 
 def get_orders(state: AgentState):
     """Fetch orders from dummy customer API"""
+    
 
     if state.parsed_filters.order_num is not None:
         response = requests.get(f'http://localhost:5001/api/order/{state.parsed_filters.order_num}')
         data = response.json()
         if data["status"] == "ok":
             raw_orders = [data["raw_order"]]
-        else :
+        else:
             raw_orders = []
 
     else:
-        limit = state.parsed_filters.limit
+        limit = 0 if state.parsed_filters.predict else state.parsed_filters.limit
         response = requests.get('http://localhost:5001/api/orders', params={"limit": limit} if limit else {})
         data = response.json()
         if data["status"] == "ok":
@@ -185,9 +188,15 @@ def get_orders(state: AgentState):
         else :
             raw_orders = []
 
-    logging.info(response.status_code)
-    logging.info(f"raw_orders: {raw_orders}")
-    
+    logging.info(f"RAW ORDERS STATUS CODE: {response.status_code}")
+    #logging.info(f"raw_orders: {raw_orders}")
+
+    '''
+    if state.parsed_filters.predict:
+        next_state = "parse"
+    else:
+        next_state = "parse_orders"
+    '''
     return Command(
         update={"raw_orders": raw_orders},
         goto="parse_orders"
@@ -199,10 +208,14 @@ def parse_orders(state: AgentState):
     parsed_orders = []
     category_counts = []
 
-        
     prompts = [f"""Extract structured data from this order text. Preserve all values exactly. Order: {raw_order}
                You must get the order_num, buyer, city, state, total_price, items (list), tech_count, accessory_count,
-               audio_count, and homegoods_count.""" for raw_order in state.raw_orders]
+               audio_count, and homegoods_count. For clarity:
+1. tech_count is the total number of times 'tech', 'laptop', 'gaming pc', and 'monitor' appear in the prediction request
+2. accessory_count is the total number of times 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard' appear
+in the prediction request
+3. audio_count is the total number of times 'audio', 'headphones' and 'earphones' appear in the prediction request
+4. homegoods_count is the total number of times 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request""" for raw_order in state.raw_orders]
     
     orders = structured_llm.batch(prompts)
 
@@ -240,14 +253,19 @@ def parse_orders(state: AgentState):
             
     #logging.info(f"parsed_orders: {parsed_orders}")
 
+    if state.parsed_filters.predict:
+        next_node = "train_and_predict"
+    else:
+        next_node = "filter_orders"
+
     return Command(
         update={
             "parsed_orders": parsed_orders,
             "category_counts": category_counts},
-        goto="train_model"
+        goto=next_node
     )
 
-def train_model(state: AgentState):
+def train_and_predict(state: AgentState):
     """Train the Linear Regression model on raw parsed orders"""
     df = pd.DataFrame(state.category_counts)
     X = df[['tech_count', 'accessory_count', 'audio_count', 'homegoods_count']]
@@ -265,10 +283,18 @@ def train_model(state: AgentState):
     mae = mean_absolute_error(y_test, y_pred)
     mse = mean_squared_error(y_test, y_pred)
     r2 = r2_score(y_test, y_pred)
-    logging.info(f"score: {model.score(X_test, y_test)}, MAE: {mae}, MSE: {mse}, R2: {r2}")
+    logging.info(f"TRAIN_MODEL score: {model.score(X_test, y_test)}, MAE: {mae}, MSE: {mse}, R2: {r2}")
 
-    # next steps: 
+    X = pd.DataFrame([state.prediction_request.model_dump()])
+
+
+    print(X)
+
+    y_pred = model.predict(X)
+    print(f"Prediction: {y_pred}")
+
     return Command(
+        update={"prediction"},
         goto=END
     )
 
@@ -305,10 +331,11 @@ def filter_orders(state: AgentState):
 
 workflow = StateGraph(AgentState)
 workflow.add_node("parse_request_filters", parse_request_filters)
+workflow.add_node("parse_prediction_request", parse_prediction_request)
 workflow.add_node("get_orders", get_orders)
 workflow.add_node("parse_orders", parse_orders)
-workflow.add_node("train_model", train_model)
-#workflow.add_node("filter_orders", filter_orders)
+workflow.add_node("train_and_predict", train_and_predict)
+workflow.add_node("filter_orders", filter_orders)
 
 
 workflow.add_edge(START, "parse_request_filters")
@@ -319,6 +346,10 @@ def main():
     initial_state = AgentState(user_request = request)
     result = app.invoke(initial_state)
 
+    if result["prediction"] is not None:
+        output = {"prediction": result["prediction"]}
+        return
+    
     filtered_orders = result["filtered_orders"]
 
     if not filtered_orders:
