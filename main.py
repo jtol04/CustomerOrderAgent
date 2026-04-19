@@ -6,13 +6,13 @@ from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 from langgraph.graph import START, END, StateGraph
 
-import numpy as np
+import pandas as pd
 from sklearn.linear_model import LinearRegression
 
 
 load_dotenv()
 OPENROUTER_API_KEY= os.getenv("OPENROUTER_API_KEY")
-logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 llm = ChatOpenAI(
     model="openai/gpt-oss-120b:exacto",
@@ -67,6 +67,8 @@ class AgentState(BaseModel):
     parsed_filters: Optional[RequestFilters] = None
     parsed_orders: List[Order] = []
     filtered_orders: List[Order]= []
+    rows: List[dict] = []
+    
 
 
 def parse_request_filters(state: AgentState):
@@ -138,6 +140,7 @@ def parse_orders(state: AgentState):
     """Use the LLM to parse orders"""
     structured_llm = llm.with_structured_output(Order)
     parsed_orders = []
+    rows = []
 
         
     prompts = [f"""Extract structured data from this order text. Preserve all values exactly. Order: {raw_order}
@@ -150,7 +153,6 @@ def parse_orders(state: AgentState):
         try: 
             # preventing hallicination
             raw_lower = raw_order.lower()
-            
             if order.order_num not in raw_order:
                 raise ValueError(f"order_num '{order.order_num}' not in RAW_ORDER")
             if order.buyer.lower() not in raw_lower:
@@ -162,18 +164,43 @@ def parse_orders(state: AgentState):
             for item in order.items:
                 if item.lower() not in raw_lower:
                     raise ValueError(f"item '{item}' not in RAW_ORDER")
+                
+            row = {
+                "tech_count": order.tech_count,
+                "accessory_count": order.accessory_count,
+                "audio_count": order.audio_count,
+                "homegoods_count": order.homegoods_count,
+                "total_price": order.total_price,
+            }
+            rows.append(row)
             parsed_orders.append(order)
             logging.info(f"PARSED_ORDER: {order}")
+
         except Exception as e:
             logging.warning(f"FAILED_ORDER: {order}")
             logging.warning(f"Failed to parse RAW_ORDER for {raw_order} | Error: {e}")
             
     #logging.info(f"parsed_orders: {parsed_orders}")
-    
+
     return Command(
-        update={"parsed_orders": parsed_orders},
-        goto="filter_orders"
+        update={
+            "parsed_orders": parsed_orders,
+            "rows": rows},
+        goto="train_model"
     )
+
+def train_model(state: AgentState):
+    """Train the Linear Regression model on raw parsed orders"""
+    df = pd.DataFrame(state.rows)
+    print(df)
+
+    # next steps: 
+    return Command(
+        goto=END
+    )
+
+
+
 
 
 def filter_orders(state: AgentState):
@@ -210,7 +237,8 @@ workflow = StateGraph(AgentState)
 workflow.add_node("parse_request_filters", parse_request_filters)
 workflow.add_node("get_orders", get_orders)
 workflow.add_node("parse_orders", parse_orders)
-workflow.add_node("filter_orders", filter_orders)
+workflow.add_node("train_model", train_model)
+#workflow.add_node("filter_orders", filter_orders)
 
 
 workflow.add_edge(START, "parse_request_filters")
