@@ -14,7 +14,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 load_dotenv()
 OPENROUTER_API_KEY= os.getenv("OPENROUTER_API_KEY")
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
 llm = ChatOpenAI(
     model="openai/gpt-oss-120b:exacto",
@@ -213,7 +213,7 @@ def parse_orders(state: AgentState):
     failed_order_count = 0
 
     prompts = [(
-        "Extract structured data from this order text. Preserve all values exactly.\n"
+        "Extract structured data from this order text. Preserve all values and white spaces as they appear.\n"
         f"Order: {raw_order}."
         "Rules:\n"
         "1. order_num is the order number exactly as it appears, e.g. 1001, 1002, etc.\n"
@@ -263,7 +263,8 @@ def parse_orders(state: AgentState):
             logging.warning(f"[parse_orders]: FAILED_ORDER {order}")
             logging.warning(f"[parse_orders]: Failed to parse RAW_ORDER for {raw_order} | Error: {e}")
  
-    logging.info(f"[parse_orders]: failed order count = {failed_order_count}")
+    if failed_order_count > 0:
+        logging.warning(f"[parse_orders]: failed order count = {failed_order_count}")
 
     if state.parsed_request_type.request_type == "order":
         next_node = "filter_orders"
@@ -364,7 +365,7 @@ def main():
         if not filtered_orders:
             print("Order not found.")
         else:
-            output = {"orders": [order.model_dump() for order in filtered_orders]}
+            output = {"orders": [order.model_dump(exclude={'tech_count, accessory_count, audio_count, homegoods_count'}) for order in filtered_orders]}
             print(json.dumps(output, indent=2))
     elif request_type == "prediction":
         prediction_result = result["prediction_result"]
