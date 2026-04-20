@@ -15,7 +15,7 @@ function App() {
     setResult(null);
 
     try {
-      const response = await fetch('http://localhost:8000/query', {
+      const response = await fetch('http://localhost:8000/request/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ request: finalText }),
@@ -33,21 +33,24 @@ function App() {
 
   return (
     <>
-      <section id="center">
-        <div>
-          <h1>Welcome!</h1>
-          <p>
+      <section className="flex items-center justify-center">
+        <div className="p-4">
+          
+          <h1 className="text-center text-5xl font-bold">Welcome!</h1>
+          <p className="text-center text-lg mx-60">
             I am a customer order agent. I can show you orders that exist
-            in the system,<br></br> or predict the total price of an order given
+            in the system, or predict the total price of an order given
             an item count per category (or multiple categories).
           </p>
-      
-      <ChatInput
-        question={question}
-        setQuestion={setQuestion}
-        onSubmit={handleSubmit}
-        isLoading={isLoading}
-        />
+          
+          <ChatInput
+            question={question}
+            setQuestion={setQuestion}
+            onSubmit={handleSubmit}
+            isLoading={isLoading}
+            />
+
+            {result && (<pre>{JSON.stringify(result, null, 2)}</pre>)}
         </div>
       </section>
     </>

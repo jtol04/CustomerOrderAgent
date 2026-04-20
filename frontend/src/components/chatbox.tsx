@@ -8,13 +8,15 @@ interface ChatInputProps {
 
 export function ChatInput({ question, setQuestion, onSubmit, isLoading }: ChatInputProps) {
     return (
-        <div>
-            <input 
-                style={{ width: '500px', height: '20px' }}
+        <div className="relative w-100 mx-auto mt-10">
+            <textarea 
+                className=" p-2 border rounded-lg w-100 h-20 text-[15px] placeholder:text-gray-500 resize-none"
                 value={question}
+                
                 onChange={(e) => setQuestion(e.target.value)}
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' && !isLoading) {
+                        e.preventDefault;
                         onSubmit(question);
                     }
                 }}
@@ -22,6 +24,7 @@ export function ChatInput({ question, setQuestion, onSubmit, isLoading }: ChatIn
                 placeholder="Ask me a question about customer orders..."
             />
             <button
+                className="px-1.5 rounded-full border text-[15px] absolute bottom-3 right-2"
                 onClick={() => onSubmit(question)}
                 disabled={isLoading || !question.trim()}
             >
