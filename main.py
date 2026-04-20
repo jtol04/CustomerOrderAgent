@@ -35,17 +35,6 @@ class Order(BaseModel):
                                             "two decimal points, e.g. 156.55, 512.00, etc")
     items: List[str] = Field(description="Complete list of items preserving all full names, e.g. 'coffee maker, monitor', 'desk lamp', etc")
 
-
-class RequestFilters(BaseModel):
-    min_total: Optional[float] = Field(default=None, description="The complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc")
-    max_total: Optional[float] = Field(default=None, description="The complete MAXIMUM price requested by the user e.g. 156.55, 1299.99, etc")
-    city: Optional[str] = Field(default=None, description="The city name only e.g. 'Columbus', 'Seattle', 'New York City', etc")
-    state: Optional[str] =Field(default=None, description="The state, which MUST evaluate to its two letter version e.g. 'NY', 'VA', 'OH', etc")
-    buyer: Optional[str] = Field(default=None, description="The COMPLETE name of the buyer, e.g. 'Chris Myers', 'John', 'Rachel Kim', etc")
-    items: Optional[List[str]] = Field(default=None, description = "The item/s being asked for within the order, e.g. 'coffee maker, headphones', etc")
-    order_num: Optional[int] = Field(default=None, description = "The order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc")
-    limit: Optional[int] = Field(default=None, description = "The quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
-
 class RequestType(BaseModel):
     request_type: Literal["order", "prediction", "invalid"] = Field(
         description=(
@@ -61,21 +50,34 @@ class RequestType(BaseModel):
         )
     )
 
+class RequestFilters(BaseModel):
+    min_total: Optional[float] = Field(default=None, description="The complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc")
+    max_total: Optional[float] = Field(default=None, description="The complete MAXIMUM price requested by the user e.g. 156.55, 1299.99, etc")
+    city: Optional[str] = Field(default=None, description="The city name only e.g. 'Columbus', 'Seattle', 'New York City', etc")
+    state: Optional[str] =Field(default=None, description="The state, which MUST evaluate to its two letter version e.g. 'NY', 'VA', 'OH', etc")
+    buyer: Optional[str] = Field(default=None, description="The COMPLETE name of the buyer, e.g. 'Chris Myers', 'John', 'Rachel Kim', etc")
+    items: Optional[List[str]] = Field(default=None, description = "The item/s being asked for within the order, e.g. 'coffee maker, headphones', etc")
+    order_num: Optional[int] = Field(default=None, description = "The order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc")
+    limit: Optional[int] = Field(default=None, description = "The quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
+
+class PredictionRequest(BaseModel):
+    tech_count: int = Field(default=0, description="The sum of the quantities specified for each instance of 'tech', 'laptop', 'gaming pc', and 'monitor' in the prediction request.")
+    accessory_count: int = Field(default=0, description="The sum of the quantities specified for each instance 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard in the request.")
+    audio_count: int = Field(default=0, description="The sum of the quantities specified for each instance of 'audio', 'headphones' and 'earphones' appear in the prediction request.")
+    homegoods_count: int = Field(default=0, description="The  sum of the quantities specified for each instance of 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request.")
+    unknown_count: int = Field(default=0, description="The sum of the quantities for each instance that any other category or item appears in the prediction request")
+
 class AgentState(BaseModel):
     user_request: str
     raw_orders: List[str] = []
     parsed_request_type: RequestType = None
     parsed_filters: Optional[RequestFilters] = None
+    parsed_prediction_request: Optional[PredictionRequest] = None
     parsed_orders: List[Order] = []
-    category_counts: List[dict] = []
     filtered_orders: List[Order]= []
     price_prediction: Optional[float] = None
 
-class PredictionRequest(BaseModel):
-    tech_count: int = Field(default=0, description="The total number of times 'tech', 'laptop', 'gaming pc', and 'monitor' appear in the prediction request")
-    accessory_count: int = Field(default=0, description="The total number of times 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard' appear in the prediction request")
-    audio_count: int = Field(default=0, description="The total number of times 'audio', 'headphones' and 'earphones' appear in the prediction request")
-    homegoods_count: int = Field(default=0, description="The total number of times 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request")
+    category_counts: List[dict] = []
 
 
 def parse_request_type(state: AgentState):
@@ -100,75 +102,78 @@ def parse_request_type(state: AgentState):
     )
     parsed_request_type = structured_llm.invoke(prompt)
 
+    if parsed_request_type.request_type == "order":
+        next_node = "parse_request_filters"
+    elif parsed_request_type.request_type == "prediction":
+        next_node = "parse_prediction_request"
+    else:
+        logging.warning(f"[parse_request_type]: INVALID REQUEST TYPE!")
+        next_node = END
+
     logging.info(f"[parse_request_type]: {parsed_request_type}")
-
-
 
     return Command(
         update={"parsed_request_type": parsed_request_type},
-        goto=END
+        goto=next_node
     )
 
 
 def parse_request_filters(state: AgentState):
     """Use the LLM to get request filters"""
     structured_llm = llm.with_structured_output(RequestFilters)
-    prompt = f"""
-You are an customer order chatbot agent. Analyze this customer request and get the filters being passed:
-Request: {state.user_request}
-Rules:
-1. min_total is the complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc.
-2. max_total is the complete MAXIMUM price requested by the user e.g. 156.55, 1299.99, etc.
-3. city is a US city name e.g. 'Columbus', 'Seattle', 'New York City', etc.
-4. state is a US state. this MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', etc
-5. buyer is the COMPLETE name of the buyer. If it is just a first name or last name, parse this name still.
-as a buyer e.g. 'Chris Myers', 'Chris', 'Myers', 'John', 'Rachel Kim', etc.
-6. items is the list of items being asked for within the order, e.g. 'coffee maker', 'headphones', etc.
-7. order_num is the order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc
-8. limit is the quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
-9. these filters are optional, except for invalid bool and predict bool which both default to False
-10. predict classifies whether the request asks for a price prediction given a category count (or multiple category counts).
-11. invalid classifies whether the request can be answered with supported filters, or if 
-the request is anything unrelated to being a chatbot, or tries to modify or create orders (True or False).
-    """
+    prompt = (
+        "You are an customer order chatbot agent. Analyze this customer request and get the filters being passed.\n"
+        f"Request: {state.user_request}\n"
+        "Rules:\n"
+        "1. min_total is the complete MINIMUM price requested by the user, e.g. 89.50, 42.10, etc.\n"
+        "2. max_total is the complete MAXIMUM price requested by the user e.g. 156.55, 1299.99, etc.\n"
+        "3. city is a US city name e.g. 'Columbus', 'Seattle', 'New York City', etc.\n"
+        "4. state is a US state. this MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', etc.\n"
+        "5. buyer is the COMPLETE name of the buyer. If it is just a first name or last name, parse this name still "
+        "as a buyer e.g. 'Chris Myers', 'Chris', 'Myers', 'John', 'Rachel Kim', etc.\n"
+        "6. items is the list of items being asked for within the order, e.g. 'coffee maker', 'headphones', etc.\n"
+        "7. order_num is the order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc."
+        "8. limit is the quantity OR limit of orders indicated in the request, e.g. 2, 5, 100, etc.\n"
+    )
 
     parsed_filters = structured_llm.invoke(prompt)
+    logging.info(f"[parse_request_filters]: {parsed_filters}")
 
-    if parsed_filters.invalid:
-        logging.warning("INVALID REQUEST: Does not include a valid min_total, max_total, city, state, buyer, items, order_num or quantity filter.")
-        next_node = END
-    elif parsed_filters.predict:
-        next_node = "parse_prediction_request"
-    else:
-        next_node = "get_orders"
-
-    # add error check and validation here
-    logging.info(f"parsed_filters: {parsed_filters}")
     return Command(
         update={"parsed_filters": parsed_filters},
-        goto=next_node
+        goto=get_orders
     )
 
 def parse_prediction_request(state: AgentState):
     structured_llm = llm.with_structured_output(PredictionRequest)
-    prompt = f"""
-You are an customer order chatbot agent. Analyze this customer prediction and get the per category quantities passed:
-Prediction Request: {state.user_request}. Rules:
-1. tech_count is the total number of times 'tech', 'laptop', 'gaming pc', and 'monitor' appear in the prediction request
-2. accessory_count is the total number of times 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard' appear
-in the prediction request
-3. audio_count is the total number of times 'audio', 'headphones' and 'earphones' appear in the prediction request
-4. homegoods_count is the total number of times 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request
-    """
+    prompt = (
+        "You are an customer order chatbot agent. Analyze this customer prediction and get the per category quantities passed:\n"
+        f"Prediction Request: {state.user_request}.\n"
+        "Rules:\n"
+        "1. tech_count is the sum of the quantities specified for each instance of 'tech', 'laptop', 'gaming pc', and 'monitor' in the prediction request.\n"
+        "2. accessory_count is the total  sum of the quantities specified for each instance 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard' "
+        "in the prediction request.\n"
+        "3. audio_count is the sum of the quantities specified for each instance of 'audio', 'headphones' and 'earphones' appear in the prediction request.\n"
+        "4. homegoods_count is the sum of the quantities specified for each instance of 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request.\n"
+        "5. unknown_count is the sum of the quantities for each instance that any other category or item appears in the prediction request.\n"
+    )
 
-    output = structured_llm.invoke(prompt)
-    if output.tech_count == 0 and output.accessory_count == 0 and output.audio_count == 0 and output.homegoods_count == 0:
-        logging.warning(f"INVALID PREDICTION REQUEST: Does not include any valid per-category counts.")
+    parsed_prediction_request = structured_llm.invoke(prompt)
+    logging.info(f"[parse_prediction_request]: {parsed_prediction_request}")
+
+    if parsed_prediction_request.unknown_count > 0:
+        logging.warning("[parse_prediction_request]: INVALID PREDICTION REQUEST! Request contains an unknown category or item.")
         return Command(goto=END)
 
-
+    if (parsed_prediction_request.tech_count == 0 and
+        parsed_prediction_request.accessory_count == 0 and
+        parsed_prediction_request.audio_count == 0 and
+        parsed_prediction_request.homegoods_count == 0):
+        logging.warning("[parse_prediction_request]: INVALID PREDICTION REQUEST! Request does not include any valid per-category counts.")
+        return Command(goto=END)
+    
     return Command(
-        update={"prediction_request": output},
+        update={"parsed_prediction_request": parsed_prediction_request},
         goto="get_orders"
     )
 
@@ -176,25 +181,19 @@ in the prediction request
 def get_orders(state: AgentState):
     """Fetch orders from dummy customer API"""
     
-
-    if state.parsed_filters.order_num is not None:
+    if state.parsed_filters.order_num:
         response = requests.get(f'http://localhost:5001/api/order/{state.parsed_filters.order_num}')
-        data = response.json()
-        if data["status"] == "ok":
-            raw_orders = [data["raw_order"]]
-        else:
-            raw_orders = []
-
     else:
-        limit = 0 if state.parsed_filters.predict else state.parsed_filters.limit
+        limit = state.parsed_filters.limit
         response = requests.get('http://localhost:5001/api/orders', params={"limit": limit} if limit else {})
-        data = response.json()
-        if data["status"] == "ok":
-            raw_orders = data["raw_orders"]
-        else :
-            raw_orders = []
 
-    logging.info(f"RAW ORDERS STATUS CODE: {response.status_code}")
+    data = response.json()
+    if data["status"] == "ok":
+        raw_orders = [data["raw_order"]] if state.parsed_filters.order_num else data["raw_orders"]
+    else:
+        logging.info(f"RAW ORDERS STATUS CODE: {response.status_code}")
+        raw_orders = []
+
     #logging.info(f"raw_orders: {raw_orders}")
 
     '''
@@ -203,9 +202,10 @@ def get_orders(state: AgentState):
     else:
         next_state = "parse_orders"
     '''
+    next_state = END
     return Command(
         update={"raw_orders": raw_orders},
-        goto="parse_orders"
+        goto=next_state
     )
 
 def parse_orders(state: AgentState):
@@ -337,9 +337,10 @@ def filter_orders(state: AgentState):
 
 workflow = StateGraph(AgentState)
 workflow.add_node("parse_request_type", parse_request_type)
-"""
 workflow.add_node("parse_request_filters", parse_request_filters)
 workflow.add_node("parse_prediction_request", parse_prediction_request)
+
+"""
 workflow.add_node("get_orders", get_orders)
 workflow.add_node("parse_orders", parse_orders)
 workflow.add_node("train_and_predict", train_and_predict)
