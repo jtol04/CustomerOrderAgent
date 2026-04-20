@@ -34,6 +34,10 @@ class Order(BaseModel):
     total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits and " \
                                             "two decimal points, e.g. 156.55, 512.00, etc")
     items: List[str] = Field(description="Complete list of items preserving all full names, e.g. 'coffee maker, monitor', 'desk lamp', etc")
+    tech_count: int = Field(default=0, description="The total number of times 'laptop', 'gaming pc', and 'monitor' appear in the Items list")
+    accessory_count: int = Field(default=0, description="The total number of times 'hdmi cable', 'mouse', and 'keyboard' appear in the Items list")
+    audio_count: int = Field(default=0, description="The total number of times 'headphones' and 'earphones' appear in the Items list")
+    homegoods_count: int = Field(default=0, description="The total number of times 'coffee maker' and 'desk lamp' appear in the Items list")
 
 class RequestType(BaseModel):
     request_type: Literal["order", "prediction", "invalid"] = Field(
@@ -58,7 +62,7 @@ class RequestFilters(BaseModel):
     buyer: Optional[str] = Field(default=None, description="The COMPLETE name of the buyer, e.g. 'Chris Myers', 'John', 'Rachel Kim', etc")
     items: Optional[List[str]] = Field(default=None, description = "The item/s being asked for within the order, e.g. 'coffee maker, headphones', etc")
     order_num: Optional[int] = Field(default=None, description = "The order_num/ order number contained in the request, e.g. 1001, 1002, 1004, etc")
-    limit: Optional[int] = Field(default=None, description = "The quantity OR limit of orders indicated in the request, e.g. 2, 5, 100")
+    limit: Optional[int] = Field(default=None, description = "The quantity OR limit of orders indicated in the request, e.g. 1, 2, 5, 100, etc.")
 
 class PredictionRequest(BaseModel):
     tech_count: int = Field(default=0, description="The sum of the quantities specified for each instance of 'tech', 'laptop', 'gaming pc', and 'monitor' in the prediction request.")
@@ -75,9 +79,9 @@ class AgentState(BaseModel):
     parsed_prediction_request: Optional[PredictionRequest] = None
     parsed_orders: List[Order] = []
     filtered_orders: List[Order]= []
-    price_prediction: Optional[float] = None
+    prediction_result: Optional[float] = None
 
-    category_counts: List[dict] = []
+    order_category_counts: List[dict] = []
 
 
 def parse_request_type(state: AgentState):
@@ -90,7 +94,7 @@ def parse_request_type(state: AgentState):
         "- 'prediction' if the user asks how much, cost, or price for a hypothetical basket "
         "(signals: 'how much would', 'predict the price of', 'what would X cost', 'estimate').\n"
         "- 'order' if the user asks to list, show, retrieve, or filter actual orders "
-        "(signals: 'show me', 'list', 'get all', 'orders in', 'orders by', 'orders over').\n"
+        "(signals: 'show me', 'list', 'get all', 'all orders', 'orders in', 'orders by', 'orders over').\n"
         "- 'invalid' for anything else non-order requests or attempts to modify or delete orders.\n"
         "Examples:\n"
         "- 'how much would 3 tech items cost' is a prediction\n"
@@ -141,7 +145,7 @@ def parse_request_filters(state: AgentState):
 
     return Command(
         update={"parsed_filters": parsed_filters},
-        goto=get_orders
+        goto="get_orders"
     )
 
 def parse_prediction_request(state: AgentState):
@@ -181,53 +185,54 @@ def parse_prediction_request(state: AgentState):
 def get_orders(state: AgentState):
     """Fetch orders from dummy customer API"""
     
-    if state.parsed_filters.order_num:
+    if state.parsed_filters and state.parsed_filters.order_num:
         response = requests.get(f'http://localhost:5001/api/order/{state.parsed_filters.order_num}')
     else:
-        limit = state.parsed_filters.limit
+        limit = state.parsed_filters.limit if state.parsed_filters else None
         response = requests.get('http://localhost:5001/api/orders', params={"limit": limit} if limit else {})
 
     data = response.json()
     if data["status"] == "ok":
-        raw_orders = [data["raw_order"]] if state.parsed_filters.order_num else data["raw_orders"]
+        raw_orders = [data["raw_order"]] if (state.parsed_filters and state.parsed_filters.order_num) else data["raw_orders"]
     else:
         logging.info(f"RAW ORDERS STATUS CODE: {response.status_code}")
         raw_orders = []
 
-    #logging.info(f"raw_orders: {raw_orders}")
-
-    '''
-    if state.parsed_filters.predict:
-        next_state = "parse"
-    else:
-        next_state = "parse_orders"
-    '''
-    next_state = END
+    logging.info(f"[get_orders]: {raw_orders}")
+    
     return Command(
         update={"raw_orders": raw_orders},
-        goto=next_state
+        goto="parse_orders"
     )
 
 def parse_orders(state: AgentState):
     """Use the LLM to parse orders"""
     structured_llm = llm.with_structured_output(Order)
     parsed_orders = []
-    category_counts = []
+    order_category_counts = []
+    failed_order_count = 0
 
-    prompts = [f"""Extract structured data from this order text. Preserve all values exactly. Order: {raw_order}
-               You must get the order_num, buyer, city, state, total_price, items (list), tech_count, accessory_count,
-               audio_count, and homegoods_count. For clarity:
-1. tech_count is the total number of times 'tech', 'laptop', 'gaming pc', and 'monitor' appear in the prediction request
-2. accessory_count is the total number of times 'accessory', 'accessories', 'hdmi cable', 'mouse', and 'keyboard' appear
-in the prediction request
-3. audio_count is the total number of times 'audio', 'headphones' and 'earphones' appear in the prediction request
-4. homegoods_count is the total number of times 'homegoods', 'coffee maker' and 'desk lamp' appear in the prediction request""" for raw_order in state.raw_orders]
+    prompts = [(
+        "Extract structured data from this order text. Preserve all values exactly.\n"
+        f"Order: {raw_order}."
+        "Rules:\n"
+        "1. order_num is the order number exactly as it appears, e.g. 1001, 1002, etc.\n"
+        "2. buyer is the buyer's complete name given, e.g. 'Chris Myers', 'Rachel Kim', 'Sarah Liu', etc. It comes after Buyer=\n"
+        "3. city is the city name within the Location, e.g. 'Columbus', 'Seattle', 'Los Angeles', etc.\n"
+        "4. state is the US state within the order location. This MUST evaluate to its two letter version e.g. 'VA', 'CA', 'NY', 'OH', 'WA' etc.\n"
+        "5, total_price is the total price in USD as a decimal number. Strip the $ sign, preserve ALL digits including the two decimal points, e.g. 156.55, 512.00, etc.\n"
+        "6. items is the complete list of items preserving all full names, e.g. 'coffee maker, monitor', 'desk lamp', etc.\n"
+        "7. tech_count is the total number of times 'laptop', 'gaming pc', and 'monitor' appear in the Items list.\n"
+        "8. accessory_count is the total number of times 'hdmi cable', 'mouse', and 'keyboard' appear in the Items list.\n"
+        "9. audio_count is the total number of times 'headphones' and 'earphones' appear in the Items list.\n"
+        "10. homegoods_count is the total number of times 'coffee maker' and 'desk lamp' appear in the Items list.\n"
+        ) for raw_order in state.raw_orders ]
     
     orders = structured_llm.batch(prompts)
 
     for order, raw_order in zip(orders, state.raw_orders):
         try: 
-            # preventing hallicination
+            # checking for hallicination
             raw_lower = raw_order.lower()
             if order.order_num not in raw_order:
                 raise ValueError(f"order_num '{order.order_num}' not in RAW_ORDER")
@@ -241,7 +246,7 @@ in the prediction request
                 if item.lower() not in raw_lower:
                     raise ValueError(f"item '{item}' not in RAW_ORDER")
                 
-            category_count = {
+            order_category_count = {
                 "order_num": order.order_num,
                 "tech_count": order.tech_count,
                 "accessory_count": order.accessory_count,
@@ -249,58 +254,58 @@ in the prediction request
                 "homegoods_count": order.homegoods_count,
                 "total_price": order.total_price,
             }
-            category_counts.append(category_count)
+            order_category_counts.append(order_category_count)
             parsed_orders.append(order)
-            logging.info(f"PARSED_ORDER: {order}")
+            logging.info(f"[parse_orders]: {order}")
 
         except Exception as e:
-            logging.warning(f"FAILED_ORDER: {order}")
-            logging.warning(f"Failed to parse RAW_ORDER for {raw_order} | Error: {e}")
-            
-    #logging.info(f"parsed_orders: {parsed_orders}")
+            failed_order_count +=1
+            logging.warning(f"[parse_orders]: FAILED_ORDER {order}")
+            logging.warning(f"[parse_orders]: Failed to parse RAW_ORDER for {raw_order} | Error: {e}")
+ 
+    logging.info(f"[parse_orders]: failed order count = {failed_order_count}")
 
-    if state.parsed_filters.predict:
-        next_node = "train_and_predict"
-    else:
+    if state.parsed_request_type.request_type == "order":
         next_node = "filter_orders"
+    else:
+        next_node = "train_and_predict"
 
     return Command(
         update={
             "parsed_orders": parsed_orders,
-            "category_counts": category_counts},
+            "order_category_counts": order_category_counts},
         goto=next_node
     )
 
 def train_and_predict(state: AgentState):
     """Train the Linear Regression model on raw parsed orders"""
-    df = pd.DataFrame(state.category_counts)
+    df = pd.DataFrame(state.order_category_counts)
+    df = pd.DataFrame(state.order_category_counts)
+    print(df)
     X = df[['tech_count', 'accessory_count', 'audio_count', 'homegoods_count']]
     y = df['total_price']
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state = 2)
     model = LinearRegression()
     model.fit(X_train, y_train)
-    
-    logging.info(f"Coefficient (Slope): {model.coef_[0]}, Intercept: {model.intercept_}")
+
     y_pred = model.predict(X_test)
     predictions = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
-    logging.info(predictions.head())
+    logging.info(f"[train_and_predict]: Coefficient (Slope): {model.coef_[0]}, Intercept: {model.intercept_}")
+    logging.info(f"[train_and_predict]:\n{predictions.head()}")
 
     mae = mean_absolute_error(y_test, y_pred)
     mse = mean_squared_error(y_test, y_pred)
     r2 = r2_score(y_test, y_pred)
-    logging.info(f"TRAIN_MODEL score: {model.score(X_test, y_test)}, MAE: {mae}, MSE: {mse}, R2: {r2}")
+    logging.info(f"[train_and_predict]: Model score: {model.score(X_test, y_test)}, MAE: {mae}, MSE: {mse}, R2: {r2}")
 
-    X = pd.DataFrame([state.prediction_request.model_dump()])
+    user_prediction_request = pd.DataFrame([state.parsed_prediction_request.model_dump(exclude={'unknown_count'})])
 
-
-    print(X)
-
-    y_pred = model.predict(X)
-    print(f"Prediction: {y_pred}")
+    prediction_result = model.predict(user_prediction_request)
+    logging.info(f"[train_and_predict] Result: {prediction_result}")
 
     return Command(
-        update={"prediction"},
+        update={"prediction_result": prediction_result},
         goto=END
     )
 
@@ -328,7 +333,7 @@ def filter_orders(state: AgentState):
             continue
 
         filtered_orders.append(item)
-        logging.info(f"ORDER {item} added to FILTERED_ORDERS")
+        logging.info(f"[filter_orders]: {item} added to filtered_orders")
     
     return Command(
         update={"filtered_orders": filtered_orders},
@@ -339,13 +344,10 @@ workflow = StateGraph(AgentState)
 workflow.add_node("parse_request_type", parse_request_type)
 workflow.add_node("parse_request_filters", parse_request_filters)
 workflow.add_node("parse_prediction_request", parse_prediction_request)
-
-"""
 workflow.add_node("get_orders", get_orders)
 workflow.add_node("parse_orders", parse_orders)
 workflow.add_node("train_and_predict", train_and_predict)
 workflow.add_node("filter_orders", filter_orders)
-"""
 
 workflow.add_edge(START, "parse_request_type")
 app = workflow.compile()
@@ -354,16 +356,27 @@ def main():
     request = input("Hello! What orders you like to see? ")
     initial_state = AgentState(user_request = request)
     result = app.invoke(initial_state)
-    """
+
+    request_type = result["parsed_request_type"].request_type
     
-    filtered_orders = result["filtered_orders"]
-
-    if not filtered_orders:
-        print("Order not found.")
+    if request_type == "order":
+        filtered_orders = result["filtered_orders"]
+        if not filtered_orders:
+            print("Order not found.")
+        else:
+            output = {"orders": [order.model_dump() for order in filtered_orders]}
+            print(json.dumps(output, indent=2))
+    elif request_type == "prediction":
+        prediction_result = result["prediction_result"]
+        if not prediction_result:
+            print("Prediction failed.")
+        else:
+            output = {"predicted_total": round(float(prediction_result[0]), 2)}
+            print(json.dumps(output, indent=2))
     else:
-        output = {"orders": [order.model_dump() for order in filtered_orders]}
-        print(json.dumps(output, indent=2))
-    """
-
+        print(json.dumps({"Error": "Invalid Request!"}, indent=2))
+   
+    print("Session has ended.")
+    
 if __name__ == "__main__":
     main()
