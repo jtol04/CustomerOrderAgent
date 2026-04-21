@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ChatInput } from './components/chatbox'
 import { Welcome } from './components/welcome'
-import { ThinkingMessage, PreviewMessage } from './components/message'
+import {  PreviewMessage, ThinkingMessage } from './components/message'
 import type { message } from "./interfaces/interfaces"
 import './App.css'
 
@@ -37,7 +37,7 @@ function App() {
 
   return (
     <section className="flex flex-col min-h-screen">
-      <div className="flex flex-col justify-center flex-grow ">
+      <div className="flex flex-col justify-center flex-grow">
         {messages.length == 0 && <Welcome />}
         {messages.map((message, index) => (
           <PreviewMessage key={index} message={message} />
@@ -45,7 +45,7 @@ function App() {
         {isLoading && <ThinkingMessage/>}
       </div>
 
-      <div>
+      <div className="sticky bottom-5">
         <ChatInput
           question={question}
           setQuestion={setQuestion}

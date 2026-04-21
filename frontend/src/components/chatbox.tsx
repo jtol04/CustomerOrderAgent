@@ -28,7 +28,7 @@ export function ChatInput({ question, setQuestion, onSubmit, isLoading }: ChatIn
                 onClick={() => onSubmit(question)}
                 disabled={isLoading || !question.trim()}
             >
-                {isLoading ? 'Sending...' : 'Send'}
+                {isLoading ? 'Send' : 'Send'}
             </button>
         </div>
     );
