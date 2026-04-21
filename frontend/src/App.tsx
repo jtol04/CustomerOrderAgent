@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChatInput } from './components/chatbox'
+import { Welcome } from './components/welcome'
 import type { message } from "./interfaces/interfaces"
 import './App.css'
 
@@ -34,25 +35,22 @@ function App() {
 
 
   return (
-    <>
-      <section className="flex items-center justify-center content-center min-h-screen">
-        <div className="p-4">
-          <h1 className="text-center text-5xl font-bold">Welcome!</h1>
-          <p className="text-center text-lg mx-70">
-            I am a customer order agent. I can show you orders that exist
-            in the system, or predict the total price of an order given
-            an item count per category (or multiple categories).
-          </p>
-          
-          <ChatInput
-            question={question}
-            setQuestion={setQuestion}
-            onSubmit={handleSubmit}
-            isLoading={isLoading}
-            />
-        </div>
-      </section>
-    </>
+    <section className="flex flex-col min-h-screen">
+      <div className="flex flex-col justify-center flex-grow ">
+         {messages.length == 0 && <Welcome/>}
+      </div>
+
+      <div>
+        <ChatInput
+          question={question}
+          setQuestion={setQuestion}
+          onSubmit={handleSubmit}
+          isLoading={isLoading}
+        />
+      </div>
+    </section>
+        
+  
   );
 }
 
