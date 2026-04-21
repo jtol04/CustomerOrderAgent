@@ -8,7 +8,7 @@ interface ChatInputProps {
 
 export function ChatInput({ question, setQuestion, onSubmit, isLoading }: ChatInputProps) {
     return (
-        <div className="relative w-100 mx-auto mt-10">
+        <div className="relative w-100 mx-auto mt-5">
             <textarea 
                 className=" p-2 border rounded-lg w-100 h-20 text-[15px] placeholder:text-gray-500 resize-none"
                 value={question}
@@ -24,7 +24,7 @@ export function ChatInput({ question, setQuestion, onSubmit, isLoading }: ChatIn
                 placeholder="Ask me a question about customer orders..."
             />
             <button
-                className="px-1.5 rounded-full border text-[15px] absolute bottom-3 right-2"
+                className="px-2 rounded-full border text-[15px] absolute bottom-3.5 right-2 bg-white hover:bg-gray-800 hover:text-white"
                 onClick={() => onSubmit(question)}
                 disabled={isLoading || !question.trim()}
             >
