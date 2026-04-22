@@ -38,38 +38,7 @@ python main.py
 ## Architecture
 
 ```
-┌─────────┐
-│  START  │  user query: "show me orders in Ohio over $500"
-└────┬────┘
-     │
-     ▼
-┌───────────────────────┐
-│ parse_request_filters │   LLM parses user request and checks
-└──────────┬────────────┘   for filters passed in and validity
-           │                Note: If invalid, node goes straight to END.
-           │
-           ▼
-┌───────────────────────┐
-│      get_orders       │   HTTP GET /api/orders or 
-└──────────┬────────────┘   /api/order/<order_id> if specified
-           │
-           ▼
-┌───────────────────────┐
-│     parse_orders      │   LLM parses unstructured ORDERS list
-└──────────┬────────────┘ 
-           │
-           ▼
-┌───────────────────────┐
-│     filter_orders     │   Filter the orders based on parsed
-└──────────┬────────────┘   filter request by the user
-           │
-           ▼
-     { "orders": [...] }    Clean JSON Output
-           │
-           ▼
-        ┌─────┐
-        │ END │
-        └─────┘
+![My Image](architecture)
 ```
 
 The agent is built as a LangGraph state machine with four nodes. Each node has a single responsibility and writes to a shared `AgentState` Pydantic model.
