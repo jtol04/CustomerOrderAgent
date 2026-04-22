@@ -4,3 +4,5 @@ langgraph
 pydantic
 python-dotenv
 requests
+fastapi
+uvicorn

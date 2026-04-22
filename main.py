@@ -12,6 +12,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 
+
 load_dotenv()
 OPENROUTER_API_KEY= os.getenv("OPENROUTER_API_KEY")
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
@@ -34,10 +35,10 @@ class Order(BaseModel):
     total_price: float = Field(description="The total price in USD as a decimal number. Strip $ and commas but preserve all digits and " \
                                             "two decimal points, e.g. 156.55, 512.00, etc")
     items: List[str] = Field(description="Complete list of items preserving all full names, e.g. 'coffee maker, monitor', 'desk lamp', etc")
-    tech_count: int = Field(default=0, description="The total number of times 'laptop', 'gaming pc', and 'monitor' appear in the Items list")
-    accessory_count: int = Field(default=0, description="The total number of times 'hdmi cable', 'mouse', and 'keyboard' appear in the Items list")
-    audio_count: int = Field(default=0, description="The total number of times 'headphones' and 'earphones' appear in the Items list")
-    homegoods_count: int = Field(default=0, description="The total number of times 'coffee maker' and 'desk lamp' appear in the Items list")
+    tech_count: int = Field(default=0, description="The total number of times 'laptop', 'gaming pc', and 'monitor' appear in the Items list", exclude=True)
+    accessory_count: int = Field(default=0, description="The total number of times 'hdmi cable', 'mouse', and 'keyboard' appear in the Items list", exclude=True)
+    audio_count: int = Field(default=0, description="The total number of times 'headphones' and 'earphones' appear in the Items list", exclude=True)
+    homegoods_count: int = Field(default=0, description="The total number of times 'coffee maker' and 'desk lamp' appear in the Items list", exclude=True)
 
 class RequestType(BaseModel):
     request_type: Literal["order", "prediction", "invalid"] = Field(
@@ -351,12 +352,12 @@ workflow.add_node("train_and_predict", train_and_predict)
 workflow.add_node("filter_orders", filter_orders)
 
 workflow.add_edge(START, "parse_request_type")
-app = workflow.compile()
+agent = workflow.compile()
 
 def main():
     request = input("Hello! What orders you like to see? ")
     initial_state = AgentState(user_request = request)
-    result = app.invoke(initial_state)
+    result = agent.invoke(initial_state)
 
     request_type = result["parsed_request_type"].request_type
     
@@ -365,9 +366,10 @@ def main():
         if not filtered_orders:
             print("Order not found.")
         else:
-            output = {"orders": [order.model_dump(exclude={'tech_count, accessory_count, audio_count, homegoods_count'}) for order in filtered_orders]}
+            output = {"orders": [order.model_dump() for order in filtered_orders]}
             print(json.dumps(output, indent=2))
     elif request_type == "prediction":
+        #TODO: add accuracy/confidence score
         prediction_result = result["prediction_result"]
         if not prediction_result:
             print("Prediction failed.")
