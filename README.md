@@ -37,9 +37,9 @@ python main.py
 
 ## Architecture
 
-```
-![My Image](architecture)
-```
+
+![My Image](architecture.png)
+
 
 The agent is built as a LangGraph state machine with four nodes. Each node has a single responsibility and writes to a shared `AgentState` Pydantic model.
 
