@@ -1,0 +1,8 @@
+{
+  "name": "customer-order-agent",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "concurrently -k -n dummy-api,agent-api,frontend \"python dummy_customer_api.py\" \"uvicorn api:app --reload --port 8000\" \"npm --prefix frontend run dev\"",
+    "postinstall": "pip install -r requirements.txt && npm --prefix frontend install"
+  }
+}
