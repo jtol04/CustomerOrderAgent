@@ -41,7 +41,7 @@ npm start
 ![My Image](architecture.png)
 
 
-The agent is built as a LangGraph state machine with four nodes. Each node has a single responsibility and writes to a shared `AgentState` Pydantic model.
+The agent is built as a LangGraph state machine. Upon parsing the input and determining whether its an order query, prediction query, or validation query it traverses down the state machine accordingly.
 
 
 ## File structure
