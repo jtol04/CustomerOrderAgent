@@ -4,24 +4,21 @@ A LangGraph-based extraction agent that translates natural-language queries into
 
 ## Quick start
 
-**Prerequisites:** Python 3.10+, an OpenRouter API key.
+**Prerequisites:** Python 3.10+, Node 18+, an OpenRouter API key.
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
-
-# 2. Set up environment
+# 1. Set up environment
 cp .env.example .env
 # Edit .env and add your OPENROUTER_API_KEY
 
-# 3. Start the dummy customer API in one terminal
-python dummy_customer_api.py
+# 2. Install dependencies (Python + frontend)
+npm install
 
-# 4. Run the agent in another terminal
-python main.py
+# 3. Run everything with one command
+npm start
 ```
 
-## Testing the Agent
+## Example commands
 ```bash
 # Filter by state and price (combined filters)
 > Show me all orders in Ohio over $500
@@ -33,6 +30,9 @@ python main.py
 > Show me order 1001
 # Limit results
 > Show me 2 orders
+# Get two random orders from the database
+> Predict the price of an order with 2 tech, 1 audio
+# Access prediction model
 ```
 
 ## Architecture
@@ -47,10 +47,23 @@ The agent is built as a LangGraph state machine with four nodes. Each node has a
 ## File structure
 
 ```
-├── main.py                    # LangGraph agent + entry point
-├── dummy_customer_api.py      # Provided by Raft (not modified)
-├── requirements.txt           # requirements for running the agent
-├── .env.example                       
+├── main.py                    # LangGraph agent (nodes, state, graph)
+├── api.py                     # FastAPI wrapper exposing the agent to the frontend
+├── dummy_customer_api.py      # Dummy customer API 
+├── frontend/                  # React + Vite + Tailwind chat UI
+│   ├── index.html
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx
+│       ├── components/        # Chat UI components
+│       ├── interfaces/        # Shared TypeScript types
+│       └── assets/
+├── package.json               # Root scripts: `npm start` runs the whole stack
+├── requirements.txt           # Python dependencies
+├── .env.example
+├── architecture.png
 └── README.md
 ```
 
@@ -63,5 +76,4 @@ The agent is built as a LangGraph state machine with four nodes. Each node has a
 - Pydantic for schema definition and validation
 - Python's requests for the HTTP client
 - python-dotenv for environment variable management
-
-Model: openai/gpt-oss-120b:exacto
+- Model: openai/gpt-oss-120b:exacto
