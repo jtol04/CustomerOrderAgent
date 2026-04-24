@@ -8,3 +8,6 @@ fastapi
 uvicorn
 skl2onnx
 onnxruntime
+pandas
+scikit-learn
+numpy
