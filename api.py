@@ -30,7 +30,7 @@ async def create_request(request: Request):
         if not filtered_orders:
             return {"Error": "Order not found."}
         else:
-            output = {"orders": [order.model_dump(exclude={'tech_count, accessory_count, audio_count, homegoods_count'}) for order in filtered_orders]}
+            output = {"orders": [order.model_dump(exclude={'tech_count', 'accessory_count', 'audio_count', 'homegoods_count'}) for order in filtered_orders]}
             return output
         
     elif request_type == "prediction":
