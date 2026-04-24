@@ -16,7 +16,7 @@ export function ChatInput({ question, setQuestion, onSubmit, isLoading }: ChatIn
                 onChange={(e) => setQuestion(e.target.value)}
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' && !isLoading) {
-                        e.preventDefault;
+                        e.preventDefault();
                         onSubmit(question);
                     }
                 }}

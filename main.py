@@ -15,7 +15,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 load_dotenv()
 OPENROUTER_API_KEY= os.getenv("OPENROUTER_API_KEY")
-logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 llm = ChatOpenAI(
     model="openai/gpt-oss-120b:exacto",
@@ -281,7 +281,6 @@ def parse_orders(state: AgentState):
 
 def train_and_predict(state: AgentState):
     """Train the Linear Regression model on raw parsed orders"""
-    df = pd.DataFrame(state.order_category_counts)
     df = pd.DataFrame(state.order_category_counts)
     print(df)
     X = df[['tech_count', 'accessory_count', 'audio_count', 'homegoods_count']]
