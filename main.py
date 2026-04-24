@@ -326,7 +326,6 @@ def train_and_predict(state: AgentState):
 
     input_name = sess.get_inputs()[0].name
     pred_onx = sess.run(None, {input_name: user_input})
-    logging.info(f"[train_and_predict]: pred_onx: {pred_onx}")
     logging.info(f"[train_and_predict]: Result: {pred_onx[0][0]}")
 
     return Command(
