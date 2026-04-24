@@ -26,7 +26,7 @@ async def create_request(request: Request):
     request_type = result["parsed_request_type"].request_type
     
     if request_type == "order":
-        filtered_orders = result["filtered_orders"]
+        filtered_orders = result.get("filtered_orders")
         if not filtered_orders:
             return {"Error": "Order not found."}
         else:
@@ -34,7 +34,7 @@ async def create_request(request: Request):
             return output
         
     elif request_type == "prediction":
-        prediction_result = result["prediction_result"]
+        prediction_result = result.get("prediction_result")
         if not prediction_result:
             return {"Error": "Prediction failed."}
         else:

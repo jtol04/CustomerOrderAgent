@@ -10,8 +10,9 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-
-
+from skl2onnx import to_onnx
+import onnxruntime as rt
+import numpy as np
 
 load_dotenv()
 OPENROUTER_API_KEY= os.getenv("OPENROUTER_API_KEY")
@@ -177,9 +178,16 @@ def parse_prediction_request(state: AgentState):
         logging.warning("[parse_prediction_request]: INVALID PREDICTION REQUEST! Request does not include any valid per-category counts.")
         return Command(goto=END)
     
+    if not os.path.exists("lr_model.onnx"):
+        logging.info(f"[parse_prediction_request]: Trained model doesn't exist. Getting orders.")
+        next_node = "get_orders"
+    else:
+        logging.info(f"[parse_prediction_request]: Trained model exists. Predicting price...")
+        next_node = "train_and_predict"
+        
     return Command(
         update={"parsed_prediction_request": parsed_prediction_request},
-        goto="get_orders"
+        goto=next_node
     )
 
 
@@ -187,10 +195,10 @@ def get_orders(state: AgentState):
     """Fetch orders from dummy customer API"""
     
     if state.parsed_filters and state.parsed_filters.order_num:
-        response = requests.get(f'http://localhost:5001/api/order/{state.parsed_filters.order_num}')
+        response = requests.get(f'http://localhost:5002/api/order/{state.parsed_filters.order_num}')
     else:
         limit = state.parsed_filters.limit if state.parsed_filters else None
-        response = requests.get('http://localhost:5001/api/orders', params={"limit": limit} if limit else {})
+        response = requests.get('http://localhost:5002/api/orders', params={"limit": limit} if limit else {})
 
     data = response.json()
     if data["status"] == "ok":
@@ -281,32 +289,48 @@ def parse_orders(state: AgentState):
 
 def train_and_predict(state: AgentState):
     """Train the Linear Regression model on raw parsed orders"""
-    df = pd.DataFrame(state.order_category_counts)
-    print(df)
-    X = df[['tech_count', 'accessory_count', 'audio_count', 'homegoods_count']]
-    y = df['total_price']
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state = 2)
-    model = LinearRegression()
-    model.fit(X_train, y_train)
+    if not os.path.exists("lr_model.onnx"):
+        df = pd.DataFrame(state.order_category_counts)
+        X = df[['tech_count', 'accessory_count', 'audio_count', 'homegoods_count']]
+        y = df['total_price']
 
-    y_pred = model.predict(X_test)
-    predictions = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
-    logging.info(f"[train_and_predict]: Coefficient (Slope): {model.coef_[0]}, Intercept: {model.intercept_}")
-    logging.info(f"[train_and_predict]:\n{predictions.head()}")
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state = 2)
+        model = LinearRegression()
+        model.fit(X_train, y_train)
 
-    mae = mean_absolute_error(y_test, y_pred)
-    mse = mean_squared_error(y_test, y_pred)
-    r2 = r2_score(y_test, y_pred)
-    logging.info(f"[train_and_predict]: Model score: {model.score(X_test, y_test)}, MAE: {mae}, MSE: {mse}, R2: {r2}")
+        y_pred = model.predict(X_test)
+        predictions = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
+        logging.info(f"[train_and_predict]:\n{predictions.head()}")
+        mae = mean_absolute_error(y_test, y_pred)
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        logging.info(f"[train_and_predict]: Model score: {model.score(X_test, y_test)}, MAE: {mae}, MSE: {mse}, R2: {r2}")
+        
+        onx = to_onnx(model, X[:1].values.astype(np.float32))
+        with open("lr_model.onnx", "wb") as f:
+            f.write(onx.SerializeToString())
+        logging.info("[train_and_predict]: Model exported to ONNX.")
 
-    user_prediction_request = pd.DataFrame([state.parsed_prediction_request.model_dump(exclude={'unknown_count'})])
+    sess = rt.InferenceSession("lr_model.onnx", providers=["CPUExecutionProvider"])
+   
+    #user_prediction_request = pd.DataFrame([state.parsed_prediction_request.model_dump(exclude={'unknown_count'})])
+    #prediction_result = model.predict(user_prediction_request)
+    
+    user_input = np.array([[
+        state.parsed_prediction_request.tech_count,
+        state.parsed_prediction_request.accessory_count,
+        state.parsed_prediction_request.audio_count,
+        state.parsed_prediction_request.homegoods_count,
+    ]], dtype=np.float32)
 
-    prediction_result = model.predict(user_prediction_request)
-    logging.info(f"[train_and_predict] Result: {prediction_result}")
+    input_name = sess.get_inputs()[0].name
+    pred_onx = sess.run(None, {input_name: user_input})
+    logging.info(f"[train_and_predict]: pred_onx: {pred_onx}")
+    logging.info(f"[train_and_predict]: Result: {pred_onx[0][0]}")
 
     return Command(
-        update={"prediction_result": prediction_result},
+        update={"prediction_result": pred_onx[0][0]},
         goto=END
     )
 
@@ -361,15 +385,14 @@ def main():
     request_type = result["parsed_request_type"].request_type
     
     if request_type == "order":
-        filtered_orders = result["filtered_orders"]
+        filtered_orders = result.get("filtered_orders")
         if not filtered_orders:
             print("Order not found.")
         else:
             output = {"orders": [order.model_dump() for order in filtered_orders]}
             print(json.dumps(output, indent=2))
     elif request_type == "prediction":
-        #TODO: add accuracy/confidence score
-        prediction_result = result["prediction_result"]
+        prediction_result = result.get("prediction_result")
         if not prediction_result:
             print("Prediction failed.")
         else:
