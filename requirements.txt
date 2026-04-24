@@ -6,3 +6,5 @@ python-dotenv
 requests
 fastapi
 uvicorn
+skl2onnx
+onnxruntime
